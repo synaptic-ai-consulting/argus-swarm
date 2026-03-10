@@ -12,10 +12,12 @@ import { launchSwarm } from "./orchestrator/index.js";
 import { listAgents } from "./api/client.js";
 import { createWebhookServer } from "./webhook/server.js";
 import { handleStatusChange } from "./webhook/handler.js";
+import { startEmbeddedWebhook } from "./webhook/embedded.js";
 import { listExceptions, resolveException, getException } from "./review/store.js";
 import { getTrust } from "./trust/store.js";
 import { createUiServer } from "./ui/server.js";
 import { recordRun } from "./metrics/index.js";
+import { cleanupArgusBranches } from "./cleanup/github.js";
 
 const program = new Command();
 
@@ -30,7 +32,8 @@ program
   .option("-r, --repo <url>", "Override repository URL")
   .option("--ref <branch>", "Base branch (default: main)")
   .option("-w, --webhook <url>", "Webhook URL for status notifications")
-  .action(async (intentFile: string, opts: { repo?: string; ref?: string; webhook?: string }) => {
+  .option("--no-tunnel", "Disable auto webhook tunnel (requires webhook URL in config)")
+  .action(async (intentFile: string, opts: { repo?: string; ref?: string; webhook?: string; tunnel?: boolean }) => {
     const config = loadConfig();
     if (opts.repo) config.repository = opts.repo;
     if (opts.ref) config.defaultRef = opts.ref;
@@ -45,7 +48,19 @@ program
       console.log(`  ${i + 1}. [${p.role}] ${p.task.slice(0, 60)}...`);
     });
 
-    const webhookUrl = opts.webhook ?? config.webhookUrl;
+    let webhookUrl = opts.webhook ?? config.webhookUrl;
+    let embedded: Awaited<ReturnType<typeof startEmbeddedWebhook>> | undefined;
+
+    if (!webhookUrl && opts.tunnel !== false) {
+      console.log("Starting webhook server...");
+      embedded = await startEmbeddedWebhook(config.webhookSecret);
+      webhookUrl = embedded.webhookUrl;
+      console.log(`Webhook URL: ${webhookUrl}`);
+      console.log("(Press Ctrl+C to stop)");
+    } else if (!webhookUrl) {
+      console.log("No webhook URL. Set webhookUrl in config or use -w/--webhook.");
+    }
+
     const results = await launchSwarm(apiKey, config, workPackages, webhookUrl);
 
     recordRun({
@@ -61,6 +76,17 @@ program
     results.forEach((r) => {
       console.log(`  ${r.agentId} -> ${r.branchName}`);
     });
+
+    if (embedded) {
+      const shutdown = async () => {
+        console.log("\nShutting down webhook server...");
+        await embedded!.close();
+        process.exit(0);
+      };
+      process.on("SIGINT", shutdown);
+      process.on("SIGTERM", shutdown);
+      // Keep process alive; webhook server receives agent status callbacks
+    }
   });
 
 const intentCmd = program.command("intent").description("Manage intent files");
@@ -229,6 +255,36 @@ program
     server.listen(port, () => {
       console.log(`Argus UI: http://localhost:${port}`);
     });
+  });
+
+program
+  .command("cleanup")
+  .description("Delete argus/* branches from the configured repo (for re-running demos). Requires GITHUB_TOKEN.")
+  .option("-r, --repo <url>", "Override repository URL")
+  .option("--dry-run", "List branches that would be deleted without deleting")
+  .action(async (opts: { repo?: string; dryRun?: boolean }) => {
+    const config = loadConfig();
+    const repo = opts.repo ?? config.repository;
+    if (!repo) {
+      console.error("No repository configured. Set repository in config or use -r/--repo.");
+      process.exit(1);
+    }
+
+    const token = process.env.GITHUB_TOKEN;
+    if (!token && !opts.dryRun) {
+      console.error("GITHUB_TOKEN env var required for cleanup. Set it or use --dry-run to list branches.");
+      process.exit(1);
+    }
+
+    try {
+      const result = await cleanupArgusBranches(repo, token, { dryRun: opts.dryRun });
+      if (!opts.dryRun && (result.branchesDeleted > 0 || result.branchesFailed.length > 0)) {
+        console.log(`Done. Deleted ${result.branchesDeleted}, failed: ${result.branchesFailed.length}`);
+      }
+    } catch (err) {
+      console.error(err instanceof Error ? err.message : err);
+      process.exit(1);
+    }
   });
 
 program

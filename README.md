@@ -23,12 +23,13 @@ npx argus run intents/oauth2-auth.intent.yaml
 1. Copy `argus.config.yaml` to `argus.config.local.yaml`
 2. Set `repository` to your GitHub repo URL
 3. Set `CURSOR_API_KEY` env var or `apiKeyPath` to a file containing your Cursor API key (from [Cursor Dashboard → Integrations](https://cursor.com/dashboard?tab=integrations))
-4. Optional: `OPENAI_API_KEY` for LLM-based confidence scoring in validation
+4. Optional: `OPENAI_API_KEY` env var (or in `.env`) for LLM-based confidence scoring in validation—not in config
+5. Optional: `webhookUrl` in config or `-w/--webhook` to use your own webhook (e.g. ngrok). Otherwise `argus run` starts a tunnel automatically.
 
 ## Commands
 
 ### Run and orchestration
-- `argus run <intent-file>` - Decompose intent and launch agent swarm (N=5)
+- `argus run <intent-file>` - Decompose intent and launch agent swarm (N=5). Starts a webhook server and tunnel automatically so cloud agents can send status updates; press Ctrl+C to stop.
 - `argus agents list` - List running agents
 
 ### Intents
@@ -42,9 +43,27 @@ npx argus run intents/oauth2-auth.intent.yaml
 - `argus review show <id>` - Show exception details
 
 ### Infrastructure
-- `argus webhook serve` - Start webhook server (use with ngrok for local testing)
+- `argus webhook serve` - Start webhook server manually (e.g. with ngrok). Not needed for `argus run`—it starts one automatically.
 - `argus ui` - Start minimal web UI for monitoring and decisions
 - `argus trust show <agent-id>` - Show trust score for an agent
+- `argus cleanup` - Delete all `argus/*` and `cursor/*` branches from the configured repo (requires `GITHUB_TOKEN`). Use before re-running demos to avoid polluting the repo. `--dry-run` lists branches without deleting.
+
+## Re-running demos
+
+Each `argus run` creates 5 branches and PRs in the target repo (Cursor may name them `cursor/*`). To reset and run again:
+
+```bash
+# 1. Set GITHUB_TOKEN (repo scope) for the target repo
+export GITHUB_TOKEN=ghp_...
+
+# 2. Delete previous argus branches
+npx argus cleanup
+
+# 3. Run the demo again
+npx argus run intents/oauth2-auth.intent.yaml
+```
+
+Use `argus cleanup --dry-run` to preview which branches would be deleted.
 
 ## Architecture
 
