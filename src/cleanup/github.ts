@@ -15,10 +15,16 @@ export interface CleanupResult {
   branchesFailed: string[];
 }
 
-const AGENT_BRANCH_PREFIXES = ["argus/", "cursor/"];
+const AGENT_BRANCH_PREFIXES = ["argus/", "cursor/", "codex/"];
 
 function isAgentBranch(name: string): boolean {
   return AGENT_BRANCH_PREFIXES.some((p) => name.startsWith(p));
+}
+
+function parseLinkHeader(link: string | null): { next?: string } {
+  if (!link) return {};
+  const nextMatch = link.match(/<([^>]+)>;\s*rel="next"/);
+  return nextMatch ? { next: nextMatch[1] } : {};
 }
 
 /**
@@ -42,23 +48,27 @@ export async function cleanupArgusBranches(
   const headers: Record<string, string> = { Accept: "application/vnd.github+json" };
   if (auth) headers.Authorization = auth;
 
-  const branchesRes = await fetch(
-    `${GITHUB_API}/repos/${owner}/${repoName}/branches?per_page=100`,
-    { headers }
-  );
+  let allBranches: Array<{ name: string }> = [];
+  let url: string | undefined = `${GITHUB_API}/repos/${owner}/${repoName}/branches?per_page=100`;
 
-  if (!branchesRes.ok) {
-    const body = await branchesRes.text();
-    throw new Error(`GitHub API error: ${branchesRes.status} ${body}`);
+  while (url) {
+    const res = await fetch(url, { headers });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`GitHub API error: ${res.status} ${body}`);
+    }
+    const page = (await res.json()) as Array<{ name: string }>;
+    allBranches = allBranches.concat(page);
+    const link = parseLinkHeader(res.headers.get("link"));
+    url = link.next;
   }
 
-  const branches = (await branchesRes.json()) as Array<{ name: string }>;
-  const agentBranches = branches.filter((b) => isAgentBranch(b.name));
+  const agentBranches = allBranches.filter((b) => isAgentBranch(b.name));
 
   const result: CleanupResult = { branchesDeleted: 0, branchesFailed: [] };
 
   if (agentBranches.length === 0) {
-    console.log("No argus/* or cursor/* branches found.");
+    console.log("No argus/*, cursor/*, or codex/* branches found.");
     return result;
   }
 

@@ -4,7 +4,7 @@ export interface ValidationResult {
   prUrl?: string;
   confidence: number;
   checks: CheckResult[];
-  decision: "auto_approve" | "escalate" | "block";
+  decision: "auto_approve" | "escalate" | "block" | "blocked";
 }
 
 export interface CheckResult {

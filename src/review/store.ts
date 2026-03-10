@@ -74,6 +74,10 @@ export function getException(id: string): Exception | undefined {
   return loadExceptions().find((e) => e.id === id);
 }
 
+export function hasUnresolvedExceptionForAgent(agentId: string): boolean {
+  return loadExceptions().some((e) => e.agentId === agentId && !e.resolved);
+}
+
 export function resolveException(id: string, resolved: "approved" | "rejected"): boolean {
   const exceptions = loadExceptions();
   const idx = exceptions.findIndex((e) => e.id === id);

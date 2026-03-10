@@ -9,7 +9,7 @@ import { loadConfig, getApiKey } from "./config.js";
 import { loadIntent } from "./intent/loader.js";
 import { decompose } from "./decomposer/index.js";
 import { launchSwarm } from "./orchestrator/index.js";
-import { listAgents } from "./api/client.js";
+import { listAgents, addFollowUp } from "./api/client.js";
 import { createWebhookServer } from "./webhook/server.js";
 import { handleStatusChange } from "./webhook/handler.js";
 import { startEmbeddedWebhook } from "./webhook/embedded.js";
@@ -18,6 +18,7 @@ import { getTrust } from "./trust/store.js";
 import { createUiServer } from "./ui/server.js";
 import { recordRun } from "./metrics/index.js";
 import { cleanupArgusBranches } from "./cleanup/github.js";
+import { startBlockedDetector } from "./oversight/blocked-detector.js";
 
 const program = new Command();
 
@@ -78,8 +79,14 @@ program
     });
 
     if (embedded) {
+      const agentIds = results.map((r) => r.agentId);
+      const stopBlockedDetector = startBlockedDetector(apiKey, agentIds, (err) =>
+        console.error("[argus] Blocked detector error:", err)
+      );
+
       const shutdown = async () => {
-        console.log("\nShutting down webhook server...");
+        console.log("\nShutting down...");
+        stopBlockedDetector();
         await embedded!.close();
         process.exit(0);
       };
@@ -243,6 +250,26 @@ reviewCmd
       process.exit(1);
     }
     console.log(JSON.stringify(ex, null, 2));
+  });
+
+reviewCmd
+  .command("follow-up <id> <message...>")
+  .description("Send a follow-up prompt to a blocked agent (e.g. unblock with guidance)")
+  .action(async (id: string, messageParts: string[]) => {
+    const ex = getException(id);
+    if (!ex) {
+      console.error(`Exception ${id} not found`);
+      process.exit(1);
+    }
+    const message = messageParts.join(" ");
+    if (!message) {
+      console.error("Provide a follow-up message");
+      process.exit(1);
+    }
+    const config = loadConfig();
+    const apiKey = getApiKey(config);
+    await addFollowUp(ex.agentId, apiKey, { text: message });
+    console.log(`Follow-up sent to agent ${ex.agentId}`);
   });
 
 program

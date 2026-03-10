@@ -29,7 +29,7 @@ npx argus run intents/oauth2-auth.intent.yaml
 ## Commands
 
 ### Run and orchestration
-- `argus run <intent-file>` - Decompose intent and launch agent swarm (N=5). Starts a webhook server and tunnel automatically so cloud agents can send status updates; press Ctrl+C to stop.
+- `argus run <intent-file>` - Decompose intent and launch agent swarm (N=5). Starts a webhook server and tunnel automatically so cloud agents can send status updates; press Ctrl+C to stop. Detects blocked agents (RUNNING 5+ min with no branch/PR) and adds them to the review queue.
 - `argus agents list` - List running agents
 
 ### Intents
@@ -41,12 +41,13 @@ npx argus run intents/oauth2-auth.intent.yaml
 - `argus review approve <id>` - Approve an exception
 - `argus review reject <id>` - Reject an exception
 - `argus review show <id>` - Show exception details
+- `argus review follow-up <id> <message...>` - Send a follow-up prompt to a blocked agent (e.g. unblock with guidance)
 
 ### Infrastructure
 - `argus webhook serve` - Start webhook server manually (e.g. with ngrok). Not needed for `argus run`—it starts one automatically.
 - `argus ui` - Start minimal web UI for monitoring and decisions
 - `argus trust show <agent-id>` - Show trust score for an agent
-- `argus cleanup` - Delete all `argus/*` and `cursor/*` branches from the configured repo (requires `GITHUB_TOKEN`). Use before re-running demos to avoid polluting the repo. `--dry-run` lists branches without deleting.
+- `argus cleanup` - Delete all `argus/*`, `cursor/*`, and `codex/*` branches from the configured repo (requires `GITHUB_TOKEN`). Use before re-running demos to avoid polluting the repo. `--dry-run` lists branches without deleting.
 
 ## Re-running demos
 

@@ -29,7 +29,7 @@ async function load() {
       '<ul>' + agents.map(a => '<li>' + a.id + ' [' + a.status + '] ' + (a.branch||'') + '</li>').join('') + '</ul>' : 'None';
     const pending = exceptions.filter(e => !e.resolved);
     document.getElementById('exceptions').innerHTML = pending.length ?
-      '<ul>' + pending.map(e => '<li>' + e.id + ' agent=' + e.agentId + ' conf=' + e.confidence.toFixed(2) + 
+      '<ul>' + pending.map(e => '<li>' + e.id + ' agent=' + e.agentId + ' [' + (e.decision || 'escalate') + ']' + 
         ' <a href="/api/review/approve/' + e.id + '">approve</a> <a href="/api/review/reject/' + e.id + '">reject</a></li>').join('') + '</ul>' : 'None';
     document.getElementById('metrics').innerHTML = 
       'Runs: ' + metrics.totalRuns + ' | Agents: ' + metrics.totalAgents + ' | Exception rate: ' + (metrics.exceptionRate * 100).toFixed(1) + '%';

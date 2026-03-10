@@ -45,3 +45,8 @@ export function getAgentContext(agentId: string): AgentContext | undefined {
   load();
   return contexts.get(agentId);
 }
+
+export function getAgentIds(): string[] {
+  load();
+  return Array.from(contexts.keys());
+}
