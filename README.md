@@ -2,6 +2,8 @@
 
 **Adaptive Stigmergic Oversight (ASO)** for AI Agent Swarms. A reference implementation enabling a single human operator to safely supervise large swarms of AI coding agents via intent-based delegation, stigmergic coordination, and exception-based review.
 
+📄 [Adaptive Stigmergic Oversight: A Scalable Framework for Human Supervision of Large AI Agent Swarms](docs/aso_main.pdf) — the paper this implementation is based on.
+
 ## Quick Start
 
 ```bash
