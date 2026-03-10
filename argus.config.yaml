@@ -1,0 +1,13 @@
+# Argus global configuration
+# Copy to argus.config.local.yaml and customize for your environment
+
+apiKeyPath: ~/.cursor/argus-api-key
+# Or set CURSOR_API_KEY env var
+
+webhookUrl: ""  # Set when running webhook server (e.g., ngrok URL)
+webhookSecret: ""  # Min 32 chars for HMAC verification
+
+repository: "https://github.com/synaptic-ai-consulting/argus-demo.git"  # e.g., https://github.com/your-org/your-repo
+defaultRef: main
+
+maxAgents: 5
