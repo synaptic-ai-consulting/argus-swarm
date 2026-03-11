@@ -1,48 +1,36 @@
-import { createServer } from "node:http";
+import { createServer, type IncomingMessage } from "node:http";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { loadConfig, getApiKey } from "../config.js";
-import { listAgents } from "../api/client.js";
-import { listExceptions, resolveException } from "../review/store.js";
+import { listAgents, addFollowUp } from "../api/client.js";
+import {
+  listExceptions,
+  resolveException,
+  getException,
+} from "../review/store.js";
 import { getMetrics } from "../metrics/index.js";
+import { getTrust, getAllTrust } from "../trust/store.js";
+import { getAgentContext } from "../orchestrator/run-context.js";
 
-const HTML = `
-<!DOCTYPE html>
-<html>
-<head><title>Argus</title><meta charset="utf-8"></head>
-<body style="font-family:system-ui;max-width:800px;margin:2rem auto;padding:0 1rem">
-<h1>Argus</h1>
-<h2>Adaptive Stigmergic Oversight for AI Agent Swarms</h2>
-<h2>Agents</h2>
-<div id="agents">Loading...</div>
-<h2>Exceptions (pending review)</h2>
-<div id="exceptions">Loading...</div>
-<h2>Metrics</h2>
-<div id="metrics">Loading...</div>
-<script>
-async function load() {
-  try {
-    const [agents, exceptions, metrics] = await Promise.all([
-      fetch('/api/agents').then(r=>r.json()),
-      fetch('/api/exceptions').then(r=>r.json()),
-      fetch('/api/metrics').then(r=>r.json())
-    ]);
-    document.getElementById('agents').innerHTML = agents.length ? 
-      '<ul>' + agents.map(a => '<li>' + a.id + ' [' + a.status + '] ' + (a.branch||'') + '</li>').join('') + '</ul>' : 'None';
-    const pending = exceptions.filter(e => !e.resolved);
-    document.getElementById('exceptions').innerHTML = pending.length ?
-      '<ul>' + pending.map(e => '<li>' + e.id + ' agent=' + e.agentId + ' [' + (e.decision || 'escalate') + ']' + 
-        ' <a href="/api/review/approve/' + e.id + '">approve</a> <a href="/api/review/reject/' + e.id + '">reject</a></li>').join('') + '</ul>' : 'None';
-    document.getElementById('metrics').innerHTML = 
-      'Runs: ' + metrics.totalRuns + ' | Agents: ' + metrics.totalAgents + ' | Exception rate: ' + (metrics.exceptionRate * 100).toFixed(1) + '%';
-  } catch (e) {
-    document.getElementById('agents').innerHTML = 'Error: ' + e.message;
-  }
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const DASHBOARD_HTML = readFileSync(
+  join(__dirname, "dashboard.html"),
+  "utf-8"
+);
+
+function toRepoKey(url: string): string {
+  const u = url.replace(/\.git$/, "").replace(/\/$/, "").toLowerCase();
+  const m = u.match(/github\.com[/:]([\w-]+\/[\w.-]+)/);
+  return m ? m[1] : u;
 }
-load();
-setInterval(load, 10000);
-</script>
-</body>
-</html>
-`;
+
+async function readBody(req: IncomingMessage): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString("utf-8");
+}
 
 export function createUiServer(port: number) {
   return createServer(async (req, res) => {
@@ -51,7 +39,7 @@ export function createUiServer(port: number) {
 
     if (url.pathname === "/" || url.pathname === "/index.html") {
       res.setHeader("Content-Type", "text/html");
-      res.end(HTML);
+      res.end(DASHBOARD_HTML);
       return;
     }
 
@@ -59,26 +47,33 @@ export function createUiServer(port: number) {
       try {
         const config = loadConfig();
         const apiKey = getApiKey(config);
-        const { agents: allAgents } = await listAgents(apiKey, { limit: 50 });
+        const { agents: allAgents } = await listAgents(apiKey, { limit: 100 });
         let agents = allAgents;
         if (config.repository) {
-          const toRepoKey = (url: string) => {
-            const u = url.replace(/\.git$/, "").replace(/\/$/, "").toLowerCase();
-            const m = u.match(/github\.com[/:]([\w-]+\/[\w.-]+)/);
-            return m ? m[1] : u;
-          };
           const configKey = toRepoKey(config.repository);
-          agents = agents.filter((a) => toRepoKey(a.source?.repository ?? "") === configKey);
+          agents = agents.filter(
+            (a) => toRepoKey(a.source?.repository ?? "") === configKey
+          );
         }
-        res.end(
-          JSON.stringify(
-            agents.map((a) => ({
+
+        const enriched = await Promise.all(
+          agents.map(async (a) => {
+            const trust = await getTrust(a.id);
+            const ctx = getAgentContext(a.id);
+            return {
               id: a.id,
+              name: a.name,
               status: a.status,
               branch: a.target?.branchName,
-            }))
-          )
+              prUrl: a.target?.prUrl,
+              summary: a.summary,
+              createdAt: a.createdAt,
+              trust,
+              intent: ctx?.intent ?? null,
+            };
+          })
         );
+        res.end(JSON.stringify(enriched));
       } catch (e) {
         res.statusCode = 500;
         res.end(JSON.stringify({ error: String(e) }));
@@ -87,28 +82,137 @@ export function createUiServer(port: number) {
     }
 
     if (url.pathname === "/api/exceptions") {
-      res.end(JSON.stringify(listExceptions(true)));
+      const showAll = url.searchParams.get("all") === "1";
+      res.end(JSON.stringify(listExceptions(!showAll)));
       return;
     }
 
     if (url.pathname === "/api/metrics") {
-      res.end(JSON.stringify(getMetrics()));
+      try {
+        const base = getMetrics();
+        const allTrust = await getAllTrust();
+        const trustMean =
+          allTrust.length > 0
+            ? allTrust.reduce((s, t) => s + t.tau, 0) / allTrust.length
+            : null;
+
+        const pe = base.exceptionRate;
+        const n = base.totalAgents;
+        const effectiveFanOut = n > 0 ? n * (1 - pe * (2 / 15)) : 0;
+
+        const allExceptions = listExceptions();
+        const totalOutputs = base.totalAgents;
+        const autoApproved = totalOutputs - allExceptions.length;
+        const containmentRatio =
+          totalOutputs > 0 ? Math.max(0, autoApproved) / totalOutputs : 1;
+
+        const config = loadConfig();
+        const apiKey = getApiKey(config);
+        const { agents: allAgents } = await listAgents(apiKey, { limit: 100 });
+        let agents = allAgents;
+        if (config.repository) {
+          const configKey = toRepoKey(config.repository);
+          agents = agents.filter(
+            (a) => toRepoKey(a.source?.repository ?? "") === configKey
+          );
+        }
+
+        const statusCounts = { running: 0, finished: 0, error: 0, blocked: 0, creating: 0 };
+        for (const a of agents) {
+          switch (a.status) {
+            case "RUNNING": statusCounts.running++; break;
+            case "FINISHED": statusCounts.finished++; break;
+            case "ERROR": statusCounts.error++; break;
+            case "STOPPED": statusCounts.blocked++; break;
+            case "CREATING": statusCounts.creating++; break;
+          }
+        }
+
+        const oneHourAgo = Date.now() - 3600_000;
+        const throughputPerHour = agents.filter(
+          (a) =>
+            a.status === "FINISHED" &&
+            new Date(a.createdAt).getTime() >= oneHourAgo
+        ).length;
+
+        res.end(
+          JSON.stringify({
+            ...base,
+            effectiveFanOut,
+            throughputPerHour,
+            trustMean,
+            containmentRatio,
+            statusCounts,
+          })
+        );
+      } catch (e) {
+        res.statusCode = 500;
+        res.end(JSON.stringify({ error: String(e) }));
+      }
+      return;
+    }
+
+    if (url.pathname === "/api/trust") {
+      try {
+        const entries = await getAllTrust();
+        res.end(JSON.stringify(entries));
+      } catch (e) {
+        res.statusCode = 500;
+        res.end(JSON.stringify({ error: String(e) }));
+      }
+      return;
+    }
+
+    const followupMatch = url.pathname.match(
+      /^\/api\/review\/followup\/(.+)$/
+    );
+    if (followupMatch && req.method === "POST") {
+      try {
+        const config = loadConfig();
+        const apiKey = getApiKey(config);
+        const exId = followupMatch[1];
+        const ex = getException(exId);
+        if (!ex) {
+          res.statusCode = 404;
+          res.end(JSON.stringify({ error: "Exception not found" }));
+          return;
+        }
+        const body = JSON.parse(await readBody(req)) as { message?: string };
+        if (!body.message) {
+          res.statusCode = 400;
+          res.end(JSON.stringify({ error: "message required" }));
+          return;
+        }
+        await addFollowUp(ex.agentId, apiKey, { text: body.message });
+        res.end(JSON.stringify({ ok: true }));
+      } catch (e) {
+        res.statusCode = 500;
+        res.end(JSON.stringify({ error: String(e) }));
+      }
       return;
     }
 
     const approveMatch = url.pathname.match(/^\/api\/review\/approve\/(.+)$/);
     if (approveMatch) {
       resolveException(approveMatch[1], "approved");
-      res.writeHead(302, { Location: "/" });
-      res.end();
+      if (req.headers.accept?.includes("application/json")) {
+        res.end(JSON.stringify({ ok: true }));
+      } else {
+        res.writeHead(302, { Location: "/" });
+        res.end();
+      }
       return;
     }
 
     const rejectMatch = url.pathname.match(/^\/api\/review\/reject\/(.+)$/);
     if (rejectMatch) {
       resolveException(rejectMatch[1], "rejected");
-      res.writeHead(302, { Location: "/" });
-      res.end();
+      if (req.headers.accept?.includes("application/json")) {
+        res.end(JSON.stringify({ ok: true }));
+      } else {
+        res.writeHead(302, { Location: "/" });
+        res.end();
+      }
       return;
     }
 

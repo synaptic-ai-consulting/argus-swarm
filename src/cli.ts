@@ -2,6 +2,7 @@
 
 import "dotenv/config";
 
+import { randomBytes } from "node:crypto";
 import { Command } from "commander";
 import { readdirSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -53,6 +54,9 @@ program
     let embedded: Awaited<ReturnType<typeof startEmbeddedWebhook>> | undefined;
 
     if (!webhookUrl && opts.tunnel !== false) {
+      if (!config.webhookSecret || config.webhookSecret.length < 32) {
+        config.webhookSecret = randomBytes(32).toString("hex");
+      }
       console.log("Starting webhook server...");
       embedded = await startEmbeddedWebhook(config.webhookSecret);
       webhookUrl = embedded.webhookUrl;
@@ -60,6 +64,8 @@ program
       console.log("(Press Ctrl+C to stop)");
     } else if (!webhookUrl) {
       console.log("No webhook URL. Set webhookUrl in config or use -w/--webhook.");
+    } else if (webhookUrl && (!config.webhookSecret || config.webhookSecret.length < 32)) {
+      config.webhookSecret = randomBytes(32).toString("hex");
     }
 
     const results = await launchSwarm(apiKey, config, workPackages, webhookUrl);
@@ -78,6 +84,12 @@ program
       console.log(`  ${r.agentId} -> ${r.branchName}`);
     });
 
+    const UI_PORT = 3848;
+    const uiServer = createUiServer(UI_PORT);
+    uiServer.listen(UI_PORT, "127.0.0.1", () => {
+      console.log(`\nDashboard: http://localhost:${UI_PORT}`);
+    });
+
     if (embedded) {
       const agentIds = results.map((r) => r.agentId);
       const stopBlockedDetector = startBlockedDetector(apiKey, agentIds, (err) =>
@@ -87,12 +99,25 @@ program
       const shutdown = async () => {
         console.log("\nShutting down...");
         stopBlockedDetector();
+        await new Promise<void>((resolve) => {
+          uiServer.close(() => resolve());
+        });
         await embedded!.close();
         process.exit(0);
       };
       process.on("SIGINT", shutdown);
       process.on("SIGTERM", shutdown);
       // Keep process alive; webhook server receives agent status callbacks
+    } else {
+      const shutdown = async () => {
+        console.log("\nShutting down...");
+        await new Promise<void>((resolve) => {
+          uiServer.close(() => resolve());
+        });
+        process.exit(0);
+      };
+      process.on("SIGINT", shutdown);
+      process.on("SIGTERM", shutdown);
     }
   });
 

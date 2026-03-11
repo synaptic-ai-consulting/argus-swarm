@@ -78,6 +78,28 @@ function saveDb(): void {
   writeFileSync(getDbPath(), Buffer.from(db.export()));
 }
 
+export interface TrustEntry {
+  agentId: string;
+  tau: number;
+  updatedAt: string;
+}
+
+export async function getAllTrust(): Promise<TrustEntry[]> {
+  const d = await getDb();
+  const stmt = d.prepare("SELECT agent_id, tau, updated_at FROM agent_trust");
+  const results: TrustEntry[] = [];
+  while (stmt.step()) {
+    const row = stmt.get();
+    results.push({
+      agentId: row[0] as string,
+      tau: row[1] as number,
+      updatedAt: row[2] as string,
+    });
+  }
+  stmt.free();
+  return results;
+}
+
 /** Reset in-memory db cache. Used by tests when switching store dirs. */
 export function resetTrustStoreForTesting(): void {
   db = null;

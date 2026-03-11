@@ -29,7 +29,7 @@ npx argus run intents/oauth2-auth.intent.yaml
 ## Commands
 
 ### Run and orchestration
-- `argus run <intent-file>` - Decompose intent and launch agent swarm (N=5). Starts a webhook server and tunnel automatically so cloud agents can send status updates; press Ctrl+C to stop. Detects blocked agents (RUNNING 5+ min with no branch/PR) and adds them to the review queue.
+- `argus run <intent-file>` - Decompose intent and launch agent swarm (N=5). Starts a webhook server and tunnel automatically, and launches the oversight dashboard at http://localhost:3848; press Ctrl+C to stop. Detects blocked agents (RUNNING 5+ min with no branch/PR) and adds them to the review queue.
 - `argus agents list` - List running agents
 
 ### Intents
@@ -45,9 +45,21 @@ npx argus run intents/oauth2-auth.intent.yaml
 
 ### Infrastructure
 - `argus webhook serve` - Start webhook server manually (e.g. with ngrok). Not needed for `argus run`—it starts one automatically.
-- `argus ui` - Start minimal web UI for monitoring and decisions
+- `argus ui` - Start oversight dashboard at http://localhost:3847 (also started automatically by `argus run` on port 3848)
 - `argus trust show <agent-id>` - Show trust score for an agent
 - `argus cleanup` - Delete all `argus/*`, `cursor/*`, and `codex/*` branches from the configured repo (requires `GITHUB_TOKEN`). Use before re-running demos to avoid polluting the repo. `--dry-run` lists branches without deleting.
+
+## End-to-end demo
+
+1. **Configure** (once): copy `argus.config.yaml` to `argus.config.local.yaml`, set `repository` to a GitHub repo you can push to, and set `CURSOR_API_KEY` (and optionally `OPENAI_API_KEY` for LLM scoring).
+
+2. **Run the swarm** (one command):
+   ```bash
+   npx argus run intents/oauth2-auth.intent.yaml
+   ```
+   This launches 5 agents, starts the webhook tunnel for status updates, and **starts the oversight dashboard automatically**. Open http://localhost:3848 in a browser to see metrics, the agent swarm grid, exception queue, and activity feed. Use the dashboard to approve/reject exceptions or send follow-up prompts to blocked agents. Press Ctrl+C to stop.
+
+3. **Optional**: Run the dashboard alone (e.g. to inspect a previous run) with `npx argus ui` (http://localhost:3847). To re-run from a clean repo, use `argus cleanup` (see below) then run again.
 
 ## Re-running demos
 
