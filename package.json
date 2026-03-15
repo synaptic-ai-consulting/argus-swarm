@@ -8,7 +8,7 @@
     "argus": "./dist/cli.js"
   },
   "scripts": {
-    "build": "tsc && cp src/ui/dashboard.html dist/ui/dashboard.html",
+    "build": "tsc && npm --prefix ui run build",
     "dev": "tsx src/cli.ts",
     "start": "node dist/cli.js",
     "argus": "tsx src/cli.ts",

@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage } from "node:http";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { dirname, extname, join, normalize } from "node:path";
 import { loadConfig, getApiKey } from "../config.js";
 import { listAgents, addFollowUp } from "../api/client.js";
 import {
@@ -15,10 +15,32 @@ import { getAgentContext } from "../orchestrator/run-context.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const DASHBOARD_HTML = readFileSync(
-  join(__dirname, "dashboard.html"),
-  "utf-8"
-);
+const APP_DIR = join(__dirname, "app");
+const APP_INDEX_HTML = join(APP_DIR, "index.html");
+
+function getContentType(pathname: string): string {
+  switch (extname(pathname).toLowerCase()) {
+    case ".html":
+      return "text/html; charset=utf-8";
+    case ".js":
+      return "application/javascript; charset=utf-8";
+    case ".css":
+      return "text/css; charset=utf-8";
+    case ".json":
+      return "application/json; charset=utf-8";
+    case ".svg":
+      return "image/svg+xml";
+    case ".png":
+      return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".webp":
+      return "image/webp";
+    default:
+      return "application/octet-stream";
+  }
+}
 
 function toRepoKey(url: string): string {
   const u = url.replace(/\.git$/, "").replace(/\/$/, "").toLowerCase();
@@ -38,8 +60,33 @@ export function createUiServer(port: number) {
     res.setHeader("Content-Type", "application/json");
 
     if (url.pathname === "/" || url.pathname === "/index.html") {
-      res.setHeader("Content-Type", "text/html");
-      res.end(DASHBOARD_HTML);
+      try {
+        const html = readFileSync(APP_INDEX_HTML, "utf-8");
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        res.end(html);
+      } catch {
+        res.statusCode = 404;
+        res.end(JSON.stringify({ error: "UI build not found. Run npm run build." }));
+      }
+      return;
+    }
+
+    if (url.pathname.startsWith("/assets/")) {
+      const assetRelPath = normalize(url.pathname).replace(/^\/+/, "");
+      const assetPath = join(APP_DIR, assetRelPath);
+      if (!assetPath.startsWith(APP_DIR) || !existsSync(assetPath)) {
+        res.statusCode = 404;
+        res.end(JSON.stringify({ error: "Asset not found" }));
+        return;
+      }
+      try {
+        const content = readFileSync(assetPath);
+        res.setHeader("Content-Type", getContentType(assetPath));
+        res.end(content);
+      } catch (e) {
+        res.statusCode = 500;
+        res.end(JSON.stringify({ error: String(e) }));
+      }
       return;
     }
 
