@@ -1,0 +1,16 @@
+# Intent for testing the Exception Review UI
+# Designed to increase likelihood of exceptions: some agents may fail or produce
+# incomplete output due to scope, ambiguous requirements, or non-existent dependencies.
+# Run: npx argus run intents/exception-test.intent.yaml
+# For higher chance of exceptions, try exception-test-strict.intent.yaml instead.
+intent: "Implement a distributed tracing system with OpenTelemetry, Jaeger integration, Prometheus metrics export, and Grafana dashboards for the application"
+constraints:
+  - Use the existing instrumentation framework (may not exist in minimal repos)
+  - All HTTP endpoints must create spans
+  - Metrics must follow Prometheus naming conventions
+  - Do not add new database tables
+  - All CI checks must pass
+trustThresholds:
+  autoApprove: 0.88
+  escalate: 0.62
+  block: 0.42

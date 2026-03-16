@@ -13,7 +13,8 @@ export async function launchSwarm(
   apiKey: string,
   config: Config,
   workPackages: WorkPackage[],
-  webhookUrl?: string
+  webhookUrl?: string,
+  jobId?: string,
 ): Promise<LaunchResult[]> {
   const repo = config.repository;
   if (!repo) {
@@ -41,7 +42,7 @@ export async function launchSwarm(
       }),
     });
 
-    setAgentContext(agent.id, pkg.intent.intent, pkg.intent.constraints);
+    setAgentContext(agent.id, pkg.intent.intent, pkg.intent.constraints, jobId);
 
     results.push({
       agentId: agent.id,

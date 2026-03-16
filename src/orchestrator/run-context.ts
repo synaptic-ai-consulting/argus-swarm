@@ -7,6 +7,7 @@ const CONTEXT_FILE = "run-context.json";
 interface AgentContext {
   intent: string;
   constraints: string[];
+  jobId?: string;
 }
 
 const contexts: Map<string, AgentContext> = new Map();
@@ -35,9 +36,9 @@ function save(): void {
   writeFileSync(getPath(), JSON.stringify(obj, null, 2));
 }
 
-export function setAgentContext(agentId: string, intent: string, constraints: string[]): void {
+export function setAgentContext(agentId: string, intent: string, constraints: string[], jobId?: string): void {
   load();
-  contexts.set(agentId, { intent, constraints });
+  contexts.set(agentId, { intent, constraints, jobId });
   save();
 }
 
@@ -49,4 +50,13 @@ export function getAgentContext(agentId: string): AgentContext | undefined {
 export function getAgentIds(): string[] {
   load();
   return Array.from(contexts.keys());
+}
+
+export function getAgentIdsByJob(jobId: string): string[] {
+  load();
+  const ids: string[] = [];
+  contexts.forEach((ctx, id) => {
+    if (ctx.jobId === jobId) ids.push(id);
+  });
+  return ids;
 }

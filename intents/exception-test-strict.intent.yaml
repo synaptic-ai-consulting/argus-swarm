@@ -1,0 +1,13 @@
+# Aggressive test intent for Exception Review UI
+# Very likely to trigger exceptions: references non-existent code and has
+# constraints that may cause agents to error or produce incomplete output.
+intent: "Integrate the application with the Acme Corp REST API at https://api.acme-corp.example.com and migrate all auth to use their OAuth provider"
+constraints:
+  - Use the existing AcmeClient adapter in src/integrations/acme.ts
+  - All API calls must go through the shared rate limiter
+  - Do not modify the database schema
+  - All CI checks must pass
+trustThresholds:
+  autoApprove: 0.90
+  escalate: 0.65
+  block: 0.45

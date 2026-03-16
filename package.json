@@ -8,7 +8,7 @@
     "argus": "./dist/cli.js"
   },
   "scripts": {
-    "build": "tsc && npm --prefix ui run build",
+    "build": "tsc && (mkdir -p ui/public/assets && cp assets/argus.png ui/public/assets/ 2>/dev/null || true) && npm --prefix ui run build",
     "dev": "tsx src/cli.ts",
     "start": "node dist/cli.js",
     "argus": "tsx src/cli.ts",

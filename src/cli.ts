@@ -20,6 +20,7 @@ import { createUiServer } from "./ui/server.js";
 import { recordRun } from "./metrics/index.js";
 import { cleanupArgusBranches } from "./cleanup/github.js";
 import { startBlockedDetector } from "./oversight/blocked-detector.js";
+import { createJob } from "./jobs/store.js";
 
 const program = new Command();
 
@@ -68,10 +69,13 @@ program
       config.webhookSecret = randomBytes(32).toString("hex");
     }
 
-    const results = await launchSwarm(apiKey, config, workPackages, webhookUrl);
+    const jobId = `job-${Date.now()}`;
+    const results = await launchSwarm(apiKey, config, workPackages, webhookUrl, jobId);
+
+    createJob(jobId, intent.intent, results.map((r) => r.agentId), workPackages, intentFile);
 
     recordRun({
-      runId: `run-${Date.now()}`,
+      runId: jobId,
       intentFile,
       agentCount: results.length,
       startedAt: new Date().toISOString(),
