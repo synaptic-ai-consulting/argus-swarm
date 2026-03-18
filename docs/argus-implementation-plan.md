@@ -324,6 +324,104 @@ Uses undici `MockAgent` to intercept Cursor API requests (no real network calls)
 
 ---
 
+## Recent Enhancements (Latest Version)
+
+The following enhancements extend the original implementation plan and reflect the current ASO Control Hub.
+
+### Job Model and Data Layer
+
+- **Job store** (`src/jobs/store.ts`): First-class job records with `jobId`, `intentSummary`, `status`, `agentIds`, `workPackages`. Persisted in `.argus/jobs.json`.
+- **Run-context association**: Each agent is associated with a `jobId` in run-context; `getAgentIdsByJob(jobId)` retrieves agents per job.
+- **Agent-events store** (`src/agent-events/store.ts`): Stores `finishedAt` per agent for accurate activity feed timestamps.
+- **Job completion detection**: Webhook handler calls `checkJobCompletion` when agents reach terminal states; `GET /api/jobs` proactively updates job status as a fallback.
+
+### UI: Vite + React Migration
+
+- **Stack**: Migrated from static HTML to Vite + React + TypeScript SPA. Build output in `dist/ui/app/`.
+- **Two-tab layout**: **Intent Delegation** (Intents) and **Swarm & Exception Review** (Swarm), with consistent job selection in both.
+- **Branding**: Argus logo, full product name, and description in top bar; tab name under main view title.
+
+### Intent Delegation Tab
+
+- **Job list** (left): Jobs with status, intent summary, agent count, intent file, timestamp.
+- **Pipeline diagram**: Animated stages — Intent Defined → Decomposer → Orchestrator → Calculating Stigmergic Metrics → Create Exception Review.
+- **ASO Layer 2/3**: Show gray (pending) until orchestrator completes; then transition to done.
+- **New Job modal**: Popup with "From File" / "Inline" modes; intent file dropdown from `intents/`; trust thresholds (autoApprove, escalate, block).
+- **Launch UX**: Modal closes immediately on "Launch Job"; optimistic job addition; pipeline shown right away.
+
+### Swarm & Exception Review Tab
+
+- **Job-specific views**: All data (metrics, agents, exceptions, activity) scoped to the selected job.
+- **Metrics strip**: Fan-out, exception rate, throughput/hr, trust mean, containment — all computed per job when `jobId` is provided.
+- **Agent swarm grid**: Dots by status (running/finished/error/blocked/creating); hover to show work package card and PR link.
+- **Exception Review Queue**: Approve/reject/follow-up; "+ Test" button to add synthetic exceptions for demos.
+- **Activity feed**: Uses `finishedAt` for accurate per-agent completion timestamps.
+
+### Backend API Extensions
+
+- **Jobs API**: `GET /api/jobs`, `GET /api/jobs/:jobId`, `POST /api/jobs` (decompose, launch, create job record).
+- **Intents API**: `GET /api/intents`, `GET /api/intents/:name`, `PUT /api/intents/:name`.
+- **Config API**: `GET /api/config`, `PUT /api/config` — read/write `argus.config.local.yaml`.
+- **Test exceptions**: `POST /api/exceptions/test` — creates synthetic exception for first agent of a job (for demo/testing).
+- **Filtered endpoints**: `/api/agents`, `/api/exceptions`, `/api/metrics` accept optional `?jobId=` for job-scoped data.
+
+### Settings and Configuration
+
+- **Settings modal** (gear icon in sidebar): Configure repository, Cursor API key path, webhook URL/secret, default branch, max agents, OpenAI API key path.
+- **Config persistence**: `saveConfig()` writes to `argus.config.local.yaml`; `openaiApiKeyPath` added for future LLM decomposer.
+
+### Demo and Testing Aids
+
+- **Exception-test intents**: `intents/exception-test.intent.yaml`, `intents/exception-test-strict.intent.yaml` for triggering or testing exception flow.
+- **Demo script**: `docs/demo-script.md` — under-10-minute presentation guide for students.
+
+### Project Structure (Updated)
+
+```
+argus-swarm/
+├── argus.config.yaml / argus.config.local.yaml
+├── intents/
+│   ├── oauth2-auth.intent.yaml
+│   ├── exception-test.intent.yaml
+│   ├── exception-test-strict.intent.yaml
+│   └── *.intent.yaml
+├── src/
+│   ├── cli.ts
+│   ├── api/
+│   ├── decomposer/
+│   ├── orchestrator/
+│   │   └── run-context.ts          # jobId per agent
+│   ├── jobs/                       # Job store
+│   │   └── store.ts
+│   ├── agent-events/               # finishedAt per agent
+│   │   └── store.ts
+│   ├── validator/
+│   ├── trust/
+│   ├── review/
+│   ├── webhook/
+│   └── ui/
+│       └── server.ts               # API + static SPA
+├── ui/                            # Vite + React SPA
+│   ├── src/
+│   │   ├── App.tsx
+│   │   ├── main.tsx
+│   │   └── index.css
+│   ├── vite.config.ts
+│   └── package.json
+├── .argus/
+│   ├── jobs.json
+│   ├── agent-events.json
+│   ├── run-context.json
+│   ├── exceptions.json
+│   ├── metrics.json
+│   └── trust.db
+└── docs/
+    ├── demo-script.md
+    └── ...
+```
+
+---
+
 ## Resolved Decisions
 
 - **Repository access:** TBD (local clone vs GitHub API for validation)
