@@ -5,5 +5,6 @@ dist/
 .env.local
 *.db
 .argus/
-/plans
+# Local backlog only — never commit. If `plans/` was added by mistake: git rm -r --cached plans/
+/plans/
 /STATUS.md
