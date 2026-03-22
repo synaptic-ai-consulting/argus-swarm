@@ -1,8 +1,72 @@
 # <img src="assets/argus.png" alt="" style="height: 1em; vertical-align: middle" /> Argus
 
-**Adaptive Stigmergic Oversight (ASO)** for AI Agent Swarms. A reference implementation enabling a single human operator to safely supervise large swarms of AI coding agents via intent-based delegation, stigmergic coordination, and exception-based review.
+Argus is a reference implementation of **Adaptive Stigmergic Oversight (ASO)** for AI Agent Swarms enabling a single human operator to safely supervise large swarms of AI coding agents running on **Cursor Cloud** via intent-based delegation, stigmergic coordination, and exception-based review.
 
 📄 [Adaptive Stigmergic Oversight: A Scalable Framework for Human Supervision of Large AI Agent Swarms](docs/aso_main.pdf) — the paper this implementation is based on.
+
+## Architecture
+
+Argus is a **Node.js** control plane. It loads **YAML intents**, **decomposes** them into **work packages**, and **launches Cursor Cloud Agents** against your **GitHub** repository. Agents coordinate **stigmergically** via the shared repo (branches and PRs).
+
+On **FINISHED** or **ERROR**, Cursor invokes your **webhook**; Argus **validates** the outcome (deterministic checks plus optional **LLM** scoring), updates per-agent **trust** in SQLite, and either **auto-approves** or **enqueues an exception** for human review.
+
+The **Vite + React** dashboard is served from the same Node process behind an **`/api/*` HTTP router**. **Intent Delegation** lists jobs, shows a per-job **pipeline** (intent → decomposer → orchestrator → exception review), and **starts new jobs** with **`POST /api/jobs`** using either a repo **intent file** or an **inline intent** object. That handler runs the **same** load → decompose → launch sequence as **`argus run`**, including an **embedded webhook + tunnel** when no webhook URL is configured, plus a **blocked-agent detector** for those agents.
+
+**Swarm & Exception Review** is **job-scoped**: it reads **`/api/jobs`**, **`/api/agents`**, **`/api/exceptions`**, and **`/api/metrics`** (with optional **`jobId`**), and drives approve/reject and **follow-up** via **`/api/review/*`**. The browser only talks to **`/api/*`**; the server calls the **Cursor Agents API** where needed.
+
+Jobs, exceptions, metrics, run context, and agent events persist under **`.argus/`** (mostly JSON).
+
+```mermaid
+flowchart TB
+  subgraph operator["Operator"]
+    CLI["CLI\n(argus run, review, …)"]
+    subgraph dash["Dashboard (Vite + React)"]
+      DEL["Intent Delegation\n(pipeline + create job)"]
+      REVUI["Swarm & Exception Review\n(job-scoped)"]
+    end
+  end
+
+  subgraph argus["Argus Node.js process"]
+    API["/api router\n(jobs, intents, agents,\nexceptions, metrics, review)"]
+    INT["Intent loader"]
+    DEC["Decomposer"]
+    ORCH["Orchestrator"]
+    JOB["Job store"]
+    WH["Webhook server\n(HMAC)"]
+    HND["Webhook handler"]
+    VAL["Validator\n(+ optional LLM)"]
+    TRUST["Trust (SQLite)"]
+    REV["Exception queue"]
+    MET["Metrics / run-context\n/ agent-events"]
+    BLK["Blocked detector"]
+    DEL -->|"POST /api/jobs"| API
+    API --> INT
+    INT --> DEC --> ORCH
+    ORCH --> JOB
+    ORCH --> MET
+    REVUI -->|"GET/PATCH\n(jobId-scoped)"| API
+    API --> JOB
+    API --> REV
+    API --> MET
+    WH --> HND --> VAL
+    VAL --> TRUST
+    VAL --> REV
+    BLK -.-> REV
+  end
+
+  subgraph cursor["Cursor Cloud"]
+    CAPI["Agents API"]
+  end
+
+  GH[("GitHub repo\n(branches / PRs)")]
+
+  CLI --> INT
+  ORCH -->|"launch agents + webhook URL"| CAPI
+  BLK --> CAPI
+  CAPI --> GH
+  CAPI -.->|"status FINISHED / ERROR"| WH
+  API -->|"list / follow-up"| CAPI
+```
 
 ## Quick Start
 
@@ -45,39 +109,60 @@ npx argus run intents/oauth2-auth.intent.yaml
 
 ### Infrastructure
 - `argus webhook serve` - Start webhook server manually (e.g. with ngrok). Not needed for `argus run`—it starts one automatically.
-- `argus ui` - Start oversight dashboard at http://localhost:3847 (also started automatically by `argus run` on port 3848)
+- `argus ui` - Start the oversight dashboard only (default http://localhost:3848; override with `-p`). `argus run` starts the same UI on port 3848 automatically.
 - `argus trust show <agent-id>` - Show trust score for an agent
 - `argus cleanup` - Delete all `argus/*`, `cursor/*`, and `codex/*` branches from the configured repo (requires `GITHUB_TOKEN`). Use before re-running demos to avoid polluting the repo. `--dry-run` lists branches without deleting.
 
 ## End-to-end demo
 
-1. **Configure** (once): copy `argus.config.yaml` to `argus.config.local.yaml`, set `repository` to a GitHub repo you can push to, and set `CURSOR_API_KEY` (and optionally `OPENAI_API_KEY` for LLM scoring).
+### Prerequisites
 
-2. **Run the swarm** (one command):
-   ```bash
-   npx argus run intents/oauth2-auth.intent.yaml
-   ```
-   This launches 5 agents, starts the webhook tunnel for status updates, and **starts the oversight dashboard automatically**. Open http://localhost:3848 in a browser to see metrics, the agent swarm grid, exception queue, and activity feed. Use the dashboard to approve/reject exceptions or send follow-up prompts to blocked agents. Press Ctrl+C to stop.
+Do this once before either flow below:
 
-3. **Optional**: Run the dashboard alone (e.g. to inspect a previous run) with `npx argus ui` (http://localhost:3847). To re-run from a clean repo, use `argus cleanup` (see below) then run again.
+1. Copy `argus.config.yaml` to `argus.config.local.yaml` and set **`repository`** to a GitHub repo you can push to.
+2. Set **`CURSOR_API_KEY`** (or **`apiKeyPath`**) as described under **Configuration**.
+3. Run **`npm install`** and **`npm run build`** so the dashboard assets exist.
+4. Optional: set **`OPENAI_API_KEY`** (or `.env`) if you want LLM-assisted validation scoring.
 
-## Re-running demos
+### CLI-based demo (`argus run`)
 
-Each `argus run` creates 5 branches and PRs in the target repo (Cursor may name them `cursor/*`). To reset and run again:
+From the repo root:
+
+```bash
+npx argus run intents/oauth2-auth.intent.yaml
+```
+
+This **decomposes** the intent, **launches** five Cursor Cloud Agents, starts an **embedded webhook** and tunnel when no `webhookUrl` is configured, starts the **blocked-agent detector**, and brings up the dashboard at **http://localhost:3848**. In the browser, use **Swarm & Exception Review** (job-scoped metrics, swarm grid, exception queue, activity feed) to approve or reject exceptions and send **follow-up** prompts. **Intent Delegation** is available in the same UI if you want to start additional jobs without restarting the CLI. Press **Ctrl+C** in the terminal to stop the process (webhook tunnel and UI shut down with it).
+
+### UI-based demo (`argus ui`)
+
+Use this when you want the **dashboard to own job creation** (no long-running `argus run` in a terminal):
+
+```bash
+npx argus ui
+```
+
+Open **http://localhost:3848** (or the port you passed with **`-p`**).
+
+1. **Intent Delegation** — click **+ New Job**, choose **From File** or **Inline**, fill the form, then **Launch Job**. For example, select `intents/oauth2-auth.intent.yaml`. The server runs the same decompose → launch path as the CLI and shows the **pipeline** for that job.
+2. **Swarm & Exception Review** — select the job, then watch agents, metrics, and the **exception queue**; use the same controls as in the CLI-driven run for review and follow-up.
+
+Leave **`argus ui`** running until agents finish or you are done inspecting the run.
+
+### Resetting the target repository
+
+Each demo run creates **five branches and pull requests** in the configured repo (Cursor may name branches **`cursor/*`**). To avoid clutter before you demo again:
 
 ```bash
 # 1. Set GITHUB_TOKEN (repo scope) for the target repo
 export GITHUB_TOKEN=ghp_...
 
-# 2. Delete previous argus branches
+# 2. Delete previous Argus/Cursor agent branches
 npx argus cleanup
 
-# 3. Run the demo again
+# 3. Run either demo again (CLI or UI)
 npx argus run intents/oauth2-auth.intent.yaml
+# or: npx argus ui
 ```
 
-Use `argus cleanup --dry-run` to preview which branches would be deleted.
-
-## Architecture
-
-See [docs/argus-implementation-plan.md](docs/argus-implementation-plan.md) for the full implementation plan.
+Use **`npx argus cleanup --dry-run`** to list branches that would be deleted without removing them.

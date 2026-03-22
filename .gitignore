@@ -5,3 +5,5 @@ dist/
 .env.local
 *.db
 .argus/
+/plans
+/STATUS.md
