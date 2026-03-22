@@ -1,13 +1,35 @@
 # Argus global configuration
 # Copy to argus.config.local.yaml and customize for your environment
 
-apiKeyPath: ~/.cursor/argus-api-key
-# Or set CURSOR_API_KEY env var
 
-webhookUrl: ""  # Set when running webhook server (e.g., ngrok URL)
-webhookSecret: ""  # Min 32 chars for HMAC verification
-
+# GITHUB CONFIG
+# set this to your project repository
 repository: "https://github.com/synaptic-ai-consulting/argus-demo.git"  # e.g., https://github.com/your-org/your-repo
 defaultRef: main
 
+# [OPTIONAL] set this to your GitHub token if you want to use the cleanup command
+GITHUB_TOKEN: ""
+
+
+# CURSOR CONFIG
+# Set this to the path to your Cursor API key file to launch the cloud agents
+apiKeyPath: ~/.cursor/argus-api-key
+# Or set CURSOR_API_KEY env var
+
+# Set this to the number of agents you want to launch
 maxAgents: 5
+
+
+# OPENAI CONFIG
+# [OPTIONAL] set this to your OpenAI API key if you want to use the LLM-based intent decomposition  
+OPENAI_API_KEY: ""
+
+
+# WEBHOOK CONFIG
+# [OPTIONAL] set this to the URL of your webhook server if you want to use your own
+# webhookUrl: ""  # Set when running webhook server (e.g., ngrok URL)
+
+# Set this to a 32 character string for HMAC verification
+# webhookSecret: ""  # Min 32 chars for HMAC verification
+
+
