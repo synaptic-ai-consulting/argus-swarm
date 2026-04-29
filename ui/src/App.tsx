@@ -314,7 +314,15 @@ function PipelineDiagram({ job, agents }: { job: JobRecord; agents: Agent[] }) {
             return (
             <div key={a.id} className="pipeline-agent-row">
               <span className={`pipeline-agent-status ${spinning ? "spinning" : ""}`} style={spinning ? { background: "transparent", color: c } : { borderColor: c, background: c }} />
-              <span className="pipeline-agent-name">{a.name ?? a.id.slice(0, 10)}</span>
+              <a
+                className="pipeline-agent-name pipeline-agent-cursor-link"
+                href={`https://cursor.com/agents/${encodeURIComponent(a.id)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={`Open in Cursor · ${a.id}`}
+              >
+                {a.name ?? a.id.slice(0, 10)}
+              </a>
               <span className="pipeline-agent-label">{a.status}</span>
             </div>
             );
@@ -1124,7 +1132,7 @@ function DelegationView(props: DelegationProps) {
           {selectedJob ? (
             <>
               <div className="pipeline-header">
-                <h3>Pipeline &mdash; {selectedJob.jobId.slice(0, 16)}</h3>
+                <h3>Pipeline &mdash; {selectedJob.jobId}</h3>
                 <button className="btn btn-accent" onClick={() => props.navigateToReview(selectedJob.jobId)}>
                   <SwarmDot /> View Swarm
                 </button>

@@ -561,6 +561,16 @@ body {
   max-width: 200px;
 }
 
+a.pipeline-agent-cursor-link {
+  text-decoration: none;
+  min-width: 0;
+}
+
+a.pipeline-agent-cursor-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
 .pipeline-agent-label {
   font-family: var(--font-mono);
   font-size: 10px;
