@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, extname, join, normalize } from "node:path";
 import { loadConfig, getApiKey, saveConfig } from "../config.js";
 import { listAgents, addFollowUp } from "../api/client.js";
+import { deleteCursorAgentsRemote } from "../jobs/delete-remote-agents.js";
 import {
   listExceptions,
   resolveException,
@@ -206,11 +207,13 @@ export function createUiServer(port: number) {
           return;
         }
 
+        const agentIdsForJob = [...new Set([...job.agentIds, ...getAgentIdsByJob(jobId)])];
+
         if (job.status === "running" || job.status === "creating") {
           try {
             const config = loadConfig();
             const apiKey = getApiKey(config);
-            const idSet = new Set([...job.agentIds, ...getAgentIdsByJob(jobId)]);
+            const idSet = new Set(agentIdsForJob);
             if (idSet.size > 0) {
               const { agents } = await listAgents(apiKey, { limit: 100 });
               for (const a of agents) {
@@ -229,6 +232,41 @@ export function createUiServer(port: number) {
           } catch {
             res.statusCode = 503;
             res.end(JSON.stringify({ error: "Could not verify agent status; try again." }));
+            return;
+          }
+        }
+
+        const config = loadConfig();
+        let apiKey: string;
+        try {
+          apiKey = getApiKey(config);
+        } catch (keyErr) {
+          if (agentIdsForJob.length > 0) {
+            res.statusCode = 400;
+            res.end(
+              JSON.stringify({
+                error:
+                  "Cursor API key is required to delete remote agents. Set CURSOR_API_KEY or apiKeyPath, then try again.",
+                detail: String(keyErr),
+              }),
+            );
+            return;
+          }
+          const result = await purgeJobFromArgusStore(jobId);
+          res.end(JSON.stringify({ ok: true, removedAgentIds: result?.removedAgentIds ?? [] }));
+          return;
+        }
+
+        if (agentIdsForJob.length > 0) {
+          const { failures } = await deleteCursorAgentsRemote(agentIdsForJob, apiKey);
+          if (failures.length > 0) {
+            res.statusCode = 502;
+            res.end(
+              JSON.stringify({
+                error: "One or more agents could not be deleted in Cursor; Argus data was not removed.",
+                cursorDeleteFailures: failures,
+              }),
+            );
             return;
           }
         }

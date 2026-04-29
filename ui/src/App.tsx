@@ -565,7 +565,7 @@ function App() {
   const doDeleteJob = async (jobId: string) => {
     if (
       !window.confirm(
-        "Remove this job and all Argus-stored data for its agents (exceptions, run context, trust scores, events, metrics row)? Remote Cursor agents are not deleted.",
+        "Delete this job everywhere: remove each agent in Cursor (Cloud API) and clear all Argus-stored data for those agents (exceptions, run context, trust, events, metrics). This cannot be undone.",
       )
     ) {
       return;
@@ -573,9 +573,18 @@ function App() {
     setDeletingJobId(jobId);
     try {
       const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" });
-      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        cursorDeleteFailures?: Array<{ id: string; error: string }>;
+      };
       if (!res.ok) {
-        alert(data.error ?? `Delete failed (${res.status})`);
+        const failLines =
+          data.cursorDeleteFailures?.map((f) => `${f.id.slice(0, 12)}…: ${f.error}`).join("\n") ?? "";
+        alert(
+          failLines
+            ? `${data.error ?? `Delete failed (${res.status})`}\n\n${failLines}`
+            : (data.error ?? `Delete failed (${res.status})`),
+        );
         return;
       }
       setPipelineJobId((cur) => (cur === jobId ? null : cur));
