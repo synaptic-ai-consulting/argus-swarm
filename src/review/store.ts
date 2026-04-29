@@ -86,3 +86,10 @@ export function resolveException(id: string, resolved: "approved" | "rejected"):
   saveExceptions(exceptions);
   return true;
 }
+
+/** Drop all exception rows tied to the given agents (resolved or not). */
+export function removeExceptionsForAgentIds(agentIds: Set<string>): void {
+  if (agentIds.size === 0) return;
+  const exceptions = loadExceptions().filter((e) => !agentIds.has(e.agentId));
+  saveExceptions(exceptions);
+}

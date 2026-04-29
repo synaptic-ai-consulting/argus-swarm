@@ -158,6 +158,17 @@ function SwarmDot() {
   );
 }
 
+function IconTrashJob() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 6h18" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      <line x1="10" y1="11" x2="10" y2="17" />
+      <line x1="14" y1="11" x2="14" y2="17" />
+    </svg>
+  );
+}
+
 // ── Pipeline component ─────────────────────────────────────
 
 function PipelineDiagram({ job, agents }: { job: JobRecord; agents: Agent[] }) {
@@ -261,6 +272,7 @@ function App() {
   });
   const [configSaving, setConfigSaving] = useState(false);
   const [testExceptionAdding, setTestExceptionAdding] = useState(false);
+  const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
 
   const mostRecentJobId = useMemo(() => {
     if (jobs.length === 0) return null;
@@ -550,6 +562,33 @@ function App() {
     setTab("review");
   };
 
+  const doDeleteJob = async (jobId: string) => {
+    if (
+      !window.confirm(
+        "Remove this job and all Argus-stored data for its agents (exceptions, run context, trust scores, events, metrics row)? Remote Cursor agents are not deleted.",
+      )
+    ) {
+      return;
+    }
+    setDeletingJobId(jobId);
+    try {
+      const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        alert(data.error ?? `Delete failed (${res.status})`);
+        return;
+      }
+      setPipelineJobId((cur) => (cur === jobId ? null : cur));
+      setSelectedJobId((cur) => (cur === jobId ? null : cur));
+      setPopover((p) => (p && p.agent.jobId === jobId ? null : p));
+      await fetchAll();
+    } catch (e) {
+      alert(String(e));
+    } finally {
+      setDeletingJobId(null);
+    }
+  };
+
   // ── Render ──────────────────────────────────────────────
 
   return (
@@ -613,6 +652,8 @@ function App() {
             doCreateJob={doCreateJob}
             setPipelineJobId={setPipelineJobId}
             navigateToReview={navigateToReview}
+            onDeleteJob={doDeleteJob}
+            deletingJobId={deletingJobId}
           />
         )}
 
@@ -644,6 +685,8 @@ function App() {
             pillCounts={pillCounts}
             metricTiles={metricTiles}
             feedEvents={feedEvents}
+            onDeleteJob={doDeleteJob}
+            deletingJobId={deletingJobId}
           />
         )}
         </main>
@@ -793,6 +836,8 @@ interface DelegationProps {
   doCreateJob: () => void;
   setPipelineJobId: (v: string | null) => void;
   navigateToReview: (jobId: string) => void;
+  onDeleteJob: (jobId: string) => void | Promise<void>;
+  deletingJobId: string | null;
 }
 
 function DelegationView(props: DelegationProps) {
@@ -822,8 +867,23 @@ function DelegationView(props: DelegationProps) {
           {sortedJobs.map((job) => (
             <div key={job.jobId} className={`job-card${pipelineJobId === job.jobId ? " selected" : ""}`} onClick={() => props.setPipelineJobId(job.jobId)}>
               <div className="job-card-top">
-                <span className={`job-status-badge job-status--${job.status}`}>{JOB_STATUS_LABEL[job.status] ?? job.status}</span>
-                <span className="job-agent-count">{job.agentIds.length} agents</span>
+                <div className="job-card-top-main">
+                  <span className={`job-status-badge job-status--${job.status}`}>{JOB_STATUS_LABEL[job.status] ?? job.status}</span>
+                  <span className="job-agent-count">{job.agentIds.length} agents</span>
+                </div>
+                <button
+                  type="button"
+                  className="btn-job-delete"
+                  title="Delete job from Argus"
+                  aria-label={`Delete job ${job.jobId}`}
+                  disabled={props.deletingJobId === job.jobId}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void props.onDeleteJob(job.jobId);
+                  }}
+                >
+                  <IconTrashJob />
+                </button>
               </div>
               <div className="job-card-intent">{job.intentSummary.length > 80 ? `${job.intentSummary.slice(0, 80)}...` : job.intentSummary}</div>
               <div className="job-card-meta">
@@ -947,6 +1007,8 @@ interface ReviewProps {
   pillCounts: Metrics["statusCounts"] & Record<string, unknown>;
   metricTiles: Array<{ label: string; value: string; target: string; cls: string }>;
   feedEvents: Array<{ key: string; time: string; agent: string; type: string; [k: string]: unknown }>;
+  onDeleteJob: (jobId: string) => void | Promise<void>;
+  deletingJobId: string | null;
 }
 
 function ReviewView(props: ReviewProps) {
@@ -973,8 +1035,23 @@ function ReviewView(props: ReviewProps) {
           {sortedJobs.map((job) => (
             <div key={job.jobId} className={`job-card${selectedJobId === job.jobId ? " selected" : ""}`} onClick={() => props.setSelectedJobId(job.jobId)}>
               <div className="job-card-top">
-                <span className={`job-status-badge job-status--${job.status}`}>{JOB_STATUS_LABEL[job.status] ?? job.status}</span>
-                <span className="job-agent-count">{job.agentIds.length} agents</span>
+                <div className="job-card-top-main">
+                  <span className={`job-status-badge job-status--${job.status}`}>{JOB_STATUS_LABEL[job.status] ?? job.status}</span>
+                  <span className="job-agent-count">{job.agentIds.length} agents</span>
+                </div>
+                <button
+                  type="button"
+                  className="btn-job-delete"
+                  title="Delete job from Argus"
+                  aria-label={`Delete job ${job.jobId}`}
+                  disabled={props.deletingJobId === job.jobId}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void props.onDeleteJob(job.jobId);
+                  }}
+                >
+                  <IconTrashJob />
+                </button>
               </div>
               <div className="job-card-intent">{job.intentSummary.length > 80 ? `${job.intentSummary.slice(0, 80)}...` : job.intentSummary}</div>
               <div className="job-card-meta">
