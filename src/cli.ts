@@ -10,7 +10,7 @@ import { loadConfig, getApiKey } from "./config.js";
 import { loadIntent } from "./intent/loader.js";
 import { decompose } from "./decomposer/index.js";
 import { launchSwarm } from "./orchestrator/index.js";
-import { listAgents, addFollowUp } from "./api/client.js";
+import { listAgents, getAgent, deleteAgent, addFollowUp } from "./api/client.js";
 import { createWebhookServer } from "./webhook/server.js";
 import { handleStatusChange } from "./webhook/handler.js";
 import { startEmbeddedWebhook } from "./webhook/embedded.js";
@@ -20,7 +20,7 @@ import { createUiServer } from "./ui/server.js";
 import { recordRun } from "./metrics/index.js";
 import { cleanupArgusBranches } from "./cleanup/github.js";
 import { startBlockedDetector } from "./oversight/blocked-detector.js";
-import { createJob } from "./jobs/store.js";
+import { createJob, getJob, listJobs } from "./jobs/store.js";
 
 const program = new Command();
 
@@ -159,10 +159,15 @@ intent: "Describe your high-level objective here"
 constraints:
   - Constraint 1
   - Constraint 2
-trustThresholds:
-  autoApprove: 0.85
-  escalate: 0.60
-  block: 0.40
+# Example intent (Layer 3 gate: compare validator confidence c to a single threshold θ)
+intent: "Describe your high-level objective here"
+constraints:
+  - Constraint 1
+  - Constraint 2
+reviewThreshold: 0.85
+# Legacy (still accepted): trustThresholds.autoApprove is read as θ if reviewThreshold is omitted.
+# trustThresholds:
+#   autoApprove: 0.85
 `;
     const dir = join(process.cwd(), "intents");
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
@@ -172,22 +177,55 @@ trustThresholds:
 
 const agentsCmd = program.command("agents").description("Manage agents");
 
+function toRepoKey(url: string): string {
+  const u = url.replace(/\.git$/, "").replace(/\/$/, "").toLowerCase();
+  const m = u.match(/github\.com[/:]([\w-]+\/[\w.-]+)/);
+  return m ? m[1]! : u;
+}
+
 agentsCmd
   .command("list")
   .description("List agents (filtered by configured repository when set)")
   .option("-a, --all", "Show agents from all repositories")
-  .action(async (opts: { all?: boolean }) => {
+  .option("--job <jobId>", "Only agents from an Argus job (uses .argus/jobs.json; always shows all job agents)")
+  .action(async (opts: { all?: boolean; job?: string }) => {
     const config = loadConfig();
     const apiKey = getApiKey(config);
-    const res = await listAgents(apiKey, { limit: 50 });
+
+    if (opts.job) {
+      const job = getJob(opts.job);
+      if (!job) {
+        console.error(`Unknown job: ${opts.job}. Use: npx argus jobs`);
+        process.exit(1);
+      }
+      const agents: Awaited<ReturnType<typeof getAgent>>[] = [];
+      for (const id of job.agentIds) {
+        try {
+          agents.push(await getAgent(id, apiKey));
+        } catch {
+          console.error(`  (could not load agent ${id} — it may have been deleted in Cursor)`);
+        }
+      }
+      let filtered = agents;
+      if (!opts.all && config.repository) {
+        const configKey = toRepoKey(config.repository);
+        filtered = agents.filter((a) => toRepoKey(a.source?.repository ?? "") === configKey);
+      }
+      if (filtered.length === 0) {
+        console.log("No agents found for this job (or repo filter excluded all).");
+        return;
+      }
+      console.log(`Agents for job ${opts.job} (${job.intentSummary.slice(0, 60)}…):`);
+      filtered.forEach((a) => {
+        console.log(`  ${a.id} [${a.status}] ${a.target?.branchName ?? "-"}`);
+      });
+      return;
+    }
+
+    const res = await listAgents(apiKey, { limit: 100 });
     let agents = res.agents;
 
     if (!opts.all && config.repository) {
-      const toRepoKey = (url: string) => {
-        const u = url.replace(/\.git$/, "").replace(/\/$/, "").toLowerCase();
-        const m = u.match(/github\.com[/:]([\w-]+\/[\w.-]+)/);
-        return m ? m[1] : u;
-      };
       const configKey = toRepoKey(config.repository);
       agents = agents.filter((a) => {
         const src = a.source?.repository ?? "";
@@ -199,9 +237,39 @@ agentsCmd
       console.log("No agents found.");
       return;
     }
-    console.log("Agents:");
+    console.log("Agents (newest from Cursor API, max 100):");
     agents.forEach((a) => {
       console.log(`  ${a.id} [${a.status}] ${a.target?.branchName ?? "-"}`);
+    });
+  });
+
+agentsCmd
+  .command("delete <agent-id>")
+  .description("Permanently remove a cloud agent record in Cursor (Git branches are unchanged; use argus cleanup for those)")
+  .action(async (agentId: string) => {
+    const config = loadConfig();
+    const apiKey = getApiKey(config);
+    await deleteAgent(agentId, apiKey);
+    console.log(`Deleted cloud agent ${agentId}`);
+  });
+
+program
+  .command("jobs")
+  .description("List Argus jobs from .argus/jobs.json (for use with: npx argus agents list --job <id>)")
+  .action(() => {
+    const jobs = listJobs();
+    if (jobs.length === 0) {
+      console.log("No jobs recorded locally.");
+      return;
+    }
+    console.log("Jobs (most recent last):");
+    const sorted = [...jobs].sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+    );
+    sorted.forEach((j) => {
+      console.log(
+        `  ${j.jobId} [${j.status}] ${j.agentIds.length} agent(s)  ${j.createdAt}  ${j.intentSummary.slice(0, 50)}…`,
+      );
     });
   });
 

@@ -10,7 +10,4 @@ constraints:
   - Metrics must follow Prometheus naming conventions
   - Do not add new database tables
   - All CI checks must pass
-trustThresholds:
-  autoApprove: 0.88
-  escalate: 0.62
-  block: 0.42
+reviewThreshold: 0.88

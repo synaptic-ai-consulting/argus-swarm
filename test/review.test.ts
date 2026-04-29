@@ -27,12 +27,20 @@ test("review store: addException creates exception with id", () => {
       agentId: "agent-1",
       confidence: 0.5,
       checks: [{ name: "test", passed: false }],
-      decision: "escalate" as const,
+      decision: "human_review" as const,
     };
     const ex = addException(result);
     assert.ok(ex.id.startsWith("ex-"));
     assert.strictEqual(ex.agentId, "agent-1");
     assert.strictEqual(ex.confidence, 0.5);
+  });
+});
+
+test("review store: addException marks synthetic for demo exceptions", () => {
+  withTestDir(() => {
+    const r = { agentId: "a", confidence: 0.5, checks: [], decision: "human_review" as const };
+    const ex = addException(r, { synthetic: true });
+    assert.strictEqual(ex.synthetic, true);
   });
 });
 
@@ -42,13 +50,13 @@ test("review store: listExceptions returns all when pendingOnly false", () => {
       agentId: "a1",
       confidence: 0.5,
       checks: [],
-      decision: "escalate",
+      decision: "human_review",
     });
     addException({
       agentId: "a2",
       confidence: 0.5,
       checks: [],
-      decision: "escalate",
+      decision: "human_review",
     });
     const all = listExceptions(false);
     assert.strictEqual(all.length, 2);
@@ -61,13 +69,13 @@ test("review store: listExceptions filters resolved when pendingOnly true", () =
       agentId: "a1",
       confidence: 0.5,
       checks: [],
-      decision: "escalate",
+      decision: "human_review",
     });
     addException({
       agentId: "a2",
       confidence: 0.5,
       checks: [],
-      decision: "escalate",
+      decision: "human_review",
     });
     resolveException(ex1.id, "approved");
     const pending = listExceptions(true);

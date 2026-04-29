@@ -8,13 +8,15 @@ Argus is a reference implementation of **Adaptive Stigmergic Oversight (ASO)** f
 
 Argus is a **Node.js** control plane. It loads **YAML intents**, **decomposes** them into **work packages**, and **launches Cursor Cloud Agents** against your **GitHub** repository. Agents coordinate **stigmergically** via the shared repo (branches and PRs).
 
-On **FINISHED** or **ERROR**, Cursor invokes your **webhook**; Argus **validates** the outcome (deterministic checks plus optional **LLM** scoring), updates per-agent **trust** in SQLite, and either **auto-approves** or **enqueues an exception** for human review.
+On **FINISHED** or **ERROR**, Cursor invokes your **webhook**; Argus **validates** the outcome: it fetches **GitHub Checks** for the agent’s PR head (when `GITHUB_TOKEN` is set) and combines them with metadata checks and optional **LLM** scoring, updates per-agent **trust** in SQLite, and either **auto-approves** or **enqueues an exception** for human review. If Checks are unavailable, validation falls back to metadata-only with a **capped** confidence.
 
 The **Vite + React** dashboard is served from the same Node process behind an **`/api/*` HTTP router**. **Intent Delegation** lists jobs, shows a per-job **pipeline** (intent → decomposer → orchestrator → exception review), and **starts new jobs** with **`POST /api/jobs`** using either a repo **intent file** or an **inline intent** object. That handler runs the **same** load → decompose → launch sequence as **`argus run`**, including an **embedded webhook + tunnel** when no webhook URL is configured, plus a **blocked-agent detector** for those agents.
 
 **Swarm & Exception Review** is **job-scoped**: it reads **`/api/jobs`**, **`/api/agents`**, **`/api/exceptions`**, and **`/api/metrics`** (with optional **`jobId`**), and drives approve/reject and **follow-up** via **`/api/review/*`**. The browser only talks to **`/api/*`**; the server calls the **Cursor Agents API** where needed.
 
-Jobs, exceptions, metrics, run context, and agent events persist under **`.argus/`** (mostly JSON).
+Jobs, exceptions, metrics, run context, validator snapshots (per-agent confidence + checks), and agent events persist under **`.argus/`** (mostly JSON).
+
+**Terminology (paper Layer 3):** **confidence** `c` is the validator’s scalar score in \[0,1\]. **θ** is the single **review threshold** (`reviewThreshold` in YAML, or nested `confidenceGate.reviewThreshold`, or legacy `trustThresholds.autoApprove`). The **merge / policy** decision is **binary**: **c ≥ θ** ⇒ auto-approve; **c < θ** ⇒ human review. **Trust τ** is stored and updated for metrics and learning; it **does not** gate that decision in this release. **Future work:** τ-driven adaptive constraint envelopes (paper §3.2.3) are out of scope for this gate alignment.
 
 ```mermaid
 flowchart TB
@@ -87,14 +89,17 @@ npx argus run intents/oauth2-auth.intent.yaml
 1. Copy `argus.config.yaml` to `argus.config.local.yaml`
 2. Set `repository` to your GitHub repo URL
 3. Set `CURSOR_API_KEY` env var or `apiKeyPath` to a file containing your Cursor API key (from [Cursor Dashboard → Integrations](https://cursor.com/dashboard?tab=integrations))
-4. Optional: `OPENAI_API_KEY` env var (or in `.env`) for LLM-based confidence scoring in validation—not in config
-5. Optional: `webhookUrl` in config or `-w/--webhook` to use your own webhook (e.g. ngrok). Otherwise `argus run` starts a tunnel automatically.
+4. Optional: `GITHUB_TOKEN` (repo scope) so webhooks can read **Check runs** for the agent PR and use real CI results in validation (same family of token as `argus cleanup`). If unset, Argus uses metadata-only validation with a confidence cap.
+5. Optional: `OPENAI_API_KEY` env var (or in `.env`) for LLM-based confidence scoring in validation—not in config
+6. Optional: `webhookUrl` in config or `-w/--webhook` to use your own webhook (e.g. ngrok). Otherwise `argus run` starts a tunnel automatically.
 
 ## Commands
 
 ### Run and orchestration
 - `argus run <intent-file>` - Decompose intent and launch agent swarm (N=5). Starts a webhook server and tunnel automatically, and launches the oversight dashboard at http://localhost:3848; press Ctrl+C to stop. Detects blocked agents (RUNNING 5+ min with no branch/PR) and adds them to the review queue.
-- `argus agents list` - List running agents
+- `argus agents list` - List cloud agents from the Cursor API (filtered by configured repo unless `-a`; newest first, max **100**). **`--job <jobId>`** resolves agents from `.argus/jobs.json` via `GET` per id so your **latest swarm** is visible even when the flat list would be cluttered.
+- `argus jobs` - List locally recorded Argus jobs (shows `jobId` for **`agents list --job`**).
+- `argus agents delete <agent-id>` - Permanently remove a Cursor cloud agent record (does **not** delete Git branches; use **`argus cleanup`** for those).
 
 ### Intents
 - `argus intent list` - List available intent files

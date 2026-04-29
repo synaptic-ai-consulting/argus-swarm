@@ -10,6 +10,7 @@ import {
   resolveException,
   getException,
   addException,
+  repairHumanReviewGapFromStoredSnapshot,
 } from "../review/store.js";
 import { getMetrics } from "../metrics/index.js";
 import { getTrust, getAllTrust } from "../trust/store.js";
@@ -23,6 +24,8 @@ import { launchSwarm } from "../orchestrator/index.js";
 import { recordRun } from "../metrics/index.js";
 import { startEmbeddedWebhook } from "../webhook/embedded.js";
 import { startBlockedDetector } from "../oversight/blocked-detector.js";
+import { getValidationSnapshot } from "../validator/snapshot-store.js";
+import { ensureValidationSnapshotBackfill } from "../validator/backfill-validation.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -201,7 +204,13 @@ export function createUiServer(port: number) {
         const apiKey = getApiKey(config);
         const body = JSON.parse(await readBody(req)) as {
           intentFile?: string;
-          intent?: { intent: string; constraints?: string[]; trustThresholds?: Record<string, number> };
+          intent?: {
+            intent: string;
+            constraints?: string[];
+            reviewThreshold?: number;
+            confidenceGate?: { reviewThreshold: number };
+            trustThresholds?: Record<string, number>;
+          };
         };
 
         let intent;
@@ -327,9 +336,15 @@ export function createUiServer(port: number) {
           agents
             .filter((a) => !jobAgentIds || jobAgentIds.has(a.id))
             .map(async (a) => {
+              await ensureValidationSnapshotBackfill(a.id, a.status, apiKey);
               const trust = await getTrust(a.id);
               const ctx = getAgentContext(a.id);
               const finishedAt = getAgentFinishedAt(a.id);
+              const validation = getValidationSnapshot(a.id);
+              repairHumanReviewGapFromStoredSnapshot(validation, {
+                branchName: a.target?.branchName,
+                prUrl: a.target?.prUrl,
+              });
               return {
                 id: a.id,
                 name: a.name,
@@ -342,6 +357,7 @@ export function createUiServer(port: number) {
                 trust,
                 intent: ctx?.intent ?? null,
                 jobId: ctx?.jobId ?? null,
+                validation,
               };
             }),
         );
@@ -398,9 +414,10 @@ export function createUiServer(port: number) {
             { name: "pr_created", passed: false, output: undefined },
             { name: "test", passed: false, output: "Synthetic exception for testing Exception Review" },
           ],
-          decision: "escalate" as const,
+          decision: "human_review" as const,
+          reviewGate: { reviewThreshold: 0.85 },
         };
-        const ex = addException(result);
+        const ex = addException(result, { synthetic: true });
         res.end(JSON.stringify({ ok: true, exceptionId: ex.id }));
       } catch (e) {
         res.statusCode = 500;
@@ -444,14 +461,46 @@ export function createUiServer(port: number) {
 
         const effectiveFanOut = n > 0 ? n * (1 - exceptionRate * (2 / 15)) : 0;
 
-        const statusCounts = { running: 0, finished: 0, error: 0, blocked: 0, creating: 0 };
+        const pendingJobUnresolved = jobExceptions.filter((e) => !e.resolved);
+        const pendingReviewAgentIds = new Set(pendingJobUnresolved.map((e) => e.agentId));
+
+        const statusCounts = {
+          running: 0,
+          reviewRequired: 0,
+          autoApproved: 0,
+          pendingValidation: 0,
+          lifecycleError: 0,
+          lifecycleStopped: 0,
+        };
         for (const a of filteredAgents) {
           switch (a.status) {
-            case "RUNNING": statusCounts.running++; break;
-            case "FINISHED": statusCounts.finished++; break;
-            case "ERROR": statusCounts.error++; break;
-            case "STOPPED": statusCounts.blocked++; break;
-            case "CREATING": statusCounts.creating++; break;
+            case "RUNNING":
+            case "CREATING":
+              statusCounts.running++;
+              break;
+            case "ERROR":
+              statusCounts.lifecycleError++;
+              break;
+            case "STOPPED":
+              statusCounts.lifecycleStopped++;
+              break;
+            case "FINISHED": {
+              const v = getValidationSnapshot(a.id);
+              const d = v?.decision;
+              if (d === "auto_approve") statusCounts.autoApproved++;
+              else if (
+                d === "human_review" ||
+                d === "escalate" ||
+                d === "block" ||
+                d === "blocked"
+              )
+                statusCounts.reviewRequired++;
+              else if (pendingReviewAgentIds.has(a.id)) statusCounts.reviewRequired++;
+              else statusCounts.pendingValidation++;
+              break;
+            }
+            default:
+              break;
           }
         }
 

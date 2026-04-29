@@ -21,7 +21,8 @@ function isAgentBranch(name: string): boolean {
   return AGENT_BRANCH_PREFIXES.some((p) => name.startsWith(p));
 }
 
-function parseLinkHeader(link: string | null): { next?: string } {
+/** Exported for other GitHub REST paginated endpoints (e.g. check runs). */
+export function parseLinkHeader(link: string | null): { next?: string } {
   if (!link) return {};
   const nextMatch = link.match(/<([^>]+)>;\s*rel="next"/);
   return nextMatch ? { next: nextMatch[1] } : {};

@@ -35,6 +35,22 @@ test("integration: full run flow with mocked API", async () => {
     .intercept({ path: /^\/v0\/agents\/bc_mock123$/, method: "GET" })
     .reply(200, mockAgentData);
 
+  const headSha = "abc1234";
+  const gh = mockAgent.get("https://api.github.com");
+  gh.intercept({ path: "/repos/test/repo/pulls/1", method: "GET" }).reply(200, {
+    head: { sha: headSha },
+  });
+  gh
+    .intercept({
+      path: new RegExp(`^/repos/test/repo/commits/${headSha}/check-runs`),
+      method: "GET",
+    })
+    .reply(200, {
+      check_runs: [
+        { name: "Unit tests", status: "completed", conclusion: "success" },
+      ],
+    });
+
   const testDir = mkdtempSync(join(tmpdir(), "argus-integration-"));
   process.env.ARGUS_STORE_DIR = testDir;
 
@@ -44,10 +60,7 @@ test("integration: full run flow with mocked API", async () => {
 intent: "Add a hello world endpoint"
 constraints:
   - Use existing framework
-trustThresholds:
-  autoApprove: 0.85
-  escalate: 0.6
-  block: 0.4
+reviewThreshold: 0.85
 `
   );
 
@@ -71,6 +84,7 @@ trustThresholds:
     const result = await validate({
       apiKey: "fake-api-key",
       agentId: "bc_mock123",
+      githubToken: "fake-gh-token",
       intent: intent.intent,
       constraints: intent.constraints,
     });
@@ -79,7 +93,7 @@ trustThresholds:
 
     addException({
       ...result,
-      decision: "escalate",
+      decision: "human_review",
       confidence: 0.5,
     });
     const exceptions = listExceptions(true);

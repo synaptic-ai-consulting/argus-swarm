@@ -215,11 +215,12 @@ body {
   box-shadow: 0 0 8px rgba(56, 189, 248, 0.4);
 }
 
-.agent-dot[data-status="RUNNING"] { background: var(--blue); }
-.agent-dot[data-status="FINISHED"] { background: var(--green); }
-.agent-dot[data-status="ERROR"] { background: var(--red); }
-.agent-dot[data-status="STOPPED"] { background: var(--amber); }
-.agent-dot[data-status="CREATING"] { background: var(--gray); }
+.agent-dot[data-policy="running"] { background: var(--blue); }
+.agent-dot[data-policy="review_required"] { background: var(--red); }
+.agent-dot[data-policy="auto_approve"] { background: var(--green); }
+.agent-dot[data-policy="pending_validation"] { background: var(--gray); opacity: 0.9; }
+.agent-dot[data-policy="lifecycle_error"] { background: #dc2626; }
+.agent-dot[data-policy="lifecycle_stopped"] { background: var(--amber); }
 
 .agent-dot.trust-high { border-color: rgba(34, 197, 94, 0.6); }
 .agent-dot.trust-low { border-color: rgba(239, 68, 68, 0.5); border-style: dashed; }
@@ -580,7 +581,7 @@ body {
   </div>
   <div class="status-pills" id="statusPills">
     <div class="pill pill-running"><div class="dot"></div><span id="pillRunning">0</span> Running</div>
-    <div class="pill pill-finished"><div class="dot"></div><span id="pillFinished">0</span> Done</div>
+    <div class="pill pill-finished"><div class="dot"></div><span id="pillFinished">0</span> Auto-approved</div>
     <div class="pill pill-error"><div class="dot"></div><span id="pillError">0</span> Error</div>
     <div class="pill pill-exceptions"><div class="dot"></div><span id="pillExceptions">0</span> Exceptions</div>
   </div>
@@ -644,7 +645,7 @@ body {
   function renderPills() {
     const sc = metrics.statusCounts || {};
     document.getElementById("pillRunning").textContent = sc.running || 0;
-    document.getElementById("pillFinished").textContent = sc.finished || 0;
+    document.getElementById("pillFinished").textContent = sc.autoApproved ?? 0;
     document.getElementById("pillError").textContent = sc.error || 0;
     const pending = exceptions.filter(e => !e.resolved);
     document.getElementById("pillExceptions").textContent = pending.length;
@@ -701,18 +702,20 @@ body {
   // ── Swarm grid ──────────────────────────────
   function renderSwarm() {
     const sc = metrics.statusCounts || {};
-    const statusOrder = [
-      { key: "RUNNING", label: "Running", count: sc.running || 0, color: "var(--blue)" },
-      { key: "FINISHED", label: "Finished", count: sc.finished || 0, color: "var(--green)" },
-      { key: "ERROR", label: "Error", count: sc.error || 0, color: "var(--red)" },
-      { key: "STOPPED", label: "Blocked", count: sc.blocked || 0, color: "var(--amber)" },
-      { key: "CREATING", label: "Creating", count: sc.creating || 0, color: "var(--gray)" },
+    const rows = [
+      { label: "Running", count: sc.running || 0, color: "var(--blue)" },
+      { label: "Review required", count: sc.reviewRequired || 0, color: "var(--red)" },
+      { label: "Auto-approved", count: sc.autoApproved || 0, color: "var(--green)" },
+      { label: "Run failed", count: sc.lifecycleError || 0, color: "#dc2626" },
     ];
+    if ((sc.lifecycleStopped || 0) > 0) rows.push({ label: "Stopped", count: sc.lifecycleStopped, color: "var(--amber)" });
+    if ((sc.pendingValidation || 0) > 0)
+      rows.push({ label: "Awaiting validator", count: sc.pendingValidation, color: "var(--gray)" });
 
-    const statusRows = statusOrder.map(s =>
+    const statusRows = rows.map((s) =>
       '<div class="swarm-status-row">' +
         '<div class="dot" style="background:' + s.color + '"></div>' +
-        '<span>' + s.label + '</span>' +
+        '<span>' + esc(s.label) + '</span>' +
         '<span class="count">' + s.count + '</span>' +
       '</div>'
     ).join("");
@@ -722,8 +725,12 @@ body {
       if (a.trust != null) {
         trustCls = a.trust >= 0.85 ? " trust-high" : a.trust < 0.6 ? " trust-low" : "";
       }
-      const title = (a.name || a.id.slice(0, 8)) + " [" + a.status + "]" + (a.trust != null ? " τ=" + a.trust.toFixed(2) : "") + " " + elapsed(a.createdAt);
-      return '<div class="agent-dot' + trustCls + '" data-status="' + a.status + '" data-id="' + a.id + '" title="' + esc(title) + '"></div>';
+      var pk = swarmDotPolicy(a);
+      const titleBits = [(a.name || a.id.slice(0, 8)), "Cursor " + a.status];
+      if (a.validation && a.validation.decision) titleBits.push("Policy " + a.validation.decision);
+      if (a.trust != null) titleBits.push("\u03C4=" + a.trust.toFixed(2));
+      const title = titleBits.join(" \u00B7 ") + " " + elapsed(a.createdAt);
+      return '<div class="agent-dot' + trustCls + '" data-policy="' + pk + '" data-status="' + a.status + '" data-id="' + a.id + '" title="' + esc(title) + '"></div>';
     }).join("");
 
     // Trust distribution
@@ -878,14 +885,47 @@ body {
     '</div>';
   }
 
+  function swarmDotPolicy(a) {
+    var s = a.status;
+    if (s === "RUNNING" || s === "CREATING") return "running";
+    if (s === "ERROR") return "lifecycle_error";
+    if (s === "STOPPED") return "lifecycle_stopped";
+    var d = a.validation && a.validation.decision;
+    if (d === "auto_approve") return "auto_approve";
+    if (d === "block" || d === "blocked" || d === "escalate") return "review_required";
+    return "pending_validation";
+  }
+
   // ── Activity feed ───────────────────────────
+  function feedFinishedLine(a) {
+    var tau = "";
+    if (a.trust != null) tau = " (τ=" + a.trust.toFixed(2) + ")";
+    var pol = a.validation && a.validation.decision;
+    if (!pol) return "Run finished" + tau;
+    if (pol === "auto_approve") return "Run finished → <span class=\"tag-approve\">auto_approved</span>" + tau;
+    var tagClass = (pol === "block" || pol === "blocked") ? "block" : "escalate";
+    var label = String(pol).replace(/_/g, " ");
+    return "Run finished → <span class=\"tag-" + tagClass + "\">" + esc(label) + "</span>" + tau;
+  }
+
   function renderFeed() {
     const events = [];
 
     exceptions.forEach(e => {
       const agent = agents.find(a => a.id === e.agentId);
       const name = agent?.name || e.agentId.slice(0, 12);
-      events.push({ time: e.createdAt, agent: name, text: 'Exception <span class="tag-' + (e.decision || 'escalate') + '">[' + (e.decision || 'escalate') + ']</span> confidence=' + (e.confidence ?? 0).toFixed(2) });
+      const pct = Math.round(((e.confidence ?? 0) * 100));
+      var decRaw = String(e.decision || "escalate");
+      var tag = decRaw === "block" || decRaw === "blocked" ? "block" : "escalate";
+      var decLabel = esc(decRaw.replace(/_/g, " "));
+      var tauPart = "";
+      if (agent && agent.trust != null) tauPart = " \u00B7 \u03C4 " + agent.trust.toFixed(2);
+      events.push({
+        time: e.createdAt,
+        agent: name,
+        text:
+          "Review queue <span class=\"tag-" + tag + "\">" + decLabel + "</span> — " + pct + "% confidence" + tauPart,
+      });
       if (e.resolved) {
         events.push({ time: e.createdAt, agent: name, text: 'Resolved → <span class="tag-approve">' + e.resolved + '</span>' });
       }
@@ -894,7 +934,7 @@ body {
     agents.forEach(a => {
       if (a.status === "FINISHED") {
         const name = a.name || a.id.slice(0, 12);
-        events.push({ time: a.createdAt, agent: name, text: 'FINISHED' + (a.trust != null ? ' → <span class="tag-approve">auto_approved</span> (τ=' + a.trust.toFixed(2) + ')' : '') });
+        events.push({ time: a.createdAt, agent: name, text: feedFinishedLine(a) });
       }
     });
 

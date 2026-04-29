@@ -1,8 +1,9 @@
 import { getAgent } from "../api/client.js";
 import { addException, hasUnresolvedExceptionForAgent } from "../review/store.js";
-import { getAgentContext } from "../orchestrator/run-context.js";
+import { getAgentContext, resolveReviewThresholdFromStoredContext } from "../orchestrator/run-context.js";
 import type { Agent } from "../api/types.js";
 import type { ValidationResult } from "../validator/types.js";
+import { recordValidationSnapshot } from "../validator/snapshot-store.js";
 
 const BLOCKED_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
 const POLL_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
@@ -26,6 +27,7 @@ function isBlocked(agent: Agent): boolean {
  */
 function toBlockedResult(agent: Agent): ValidationResult {
   const ctx = getAgentContext(agent.id);
+  const reviewThreshold = resolveReviewThresholdFromStoredContext(ctx);
   return {
     agentId: agent.id,
     branchName: agent.target?.branchName,
@@ -36,6 +38,7 @@ function toBlockedResult(agent: Agent): ValidationResult {
       { name: "summary", passed: !!agent.summary?.trim(), output: agent.summary },
     ],
     decision: "blocked",
+    reviewGate: { reviewThreshold },
   };
 }
 
@@ -46,7 +49,7 @@ function toBlockedResult(agent: Agent): ValidationResult {
 export async function detectBlockedAgents(
   apiKey: string,
   agentIds: string[],
-  seenBlocked: Set<string>
+  seenBlocked: Set<string>,
 ): Promise<void> {
   for (const id of agentIds) {
     if (seenBlocked.has(id) || hasUnresolvedExceptionForAgent(id)) continue;
@@ -62,9 +65,10 @@ export async function detectBlockedAgents(
 
     seenBlocked.add(id);
     const result = toBlockedResult(agent);
+    recordValidationSnapshot(result);
     addException(result);
     console.log(
-      `[argus] Blocked agent detected: ${agent.id} (${agent.name ?? "unnamed"}) — no branch/PR after 5+ min. Added to review queue.`
+      `[argus] Blocked agent detected: ${agent.id} (${agent.name ?? "unnamed"}) — no branch/PR after 5+ min. Added to review queue.`,
     );
   }
 }
@@ -75,7 +79,7 @@ export async function detectBlockedAgents(
 export function startBlockedDetector(
   apiKey: string,
   agentIds: string[],
-  onError?: (err: unknown) => void
+  onError?: (err: unknown) => void,
 ): () => void {
   const seenBlocked = new Set<string>();
   const interval = setInterval(async () => {

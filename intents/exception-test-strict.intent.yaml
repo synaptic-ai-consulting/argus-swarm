@@ -7,7 +7,4 @@ constraints:
   - All API calls must go through the shared rate limiter
   - Do not modify the database schema
   - All CI checks must pass
-trustThresholds:
-  autoApprove: 0.90
-  escalate: 0.65
-  block: 0.45
+reviewThreshold: 0.90

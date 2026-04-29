@@ -1,16 +1,31 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { DEFAULT_REVIEW_THRESHOLD } from "../intent/schema.js";
 
 const STORE_DIR = ".argus";
 const CONTEXT_FILE = "run-context.json";
 
-interface AgentContext {
+/** Stored when a job launches. θ gates merge confidence; τ stays out-of-band on the trust store. */
+export interface AgentContext {
   intent: string;
   constraints: string[];
   jobId?: string;
+  /** Paper θ snapshot at launch. */
+  reviewThreshold?: number;
+  /** @deprecated Legacy field from older snapshots; θ was `autoApprove`; not used as trust τ for the gate. */
+  trustThresholds?: { autoApprove?: number; escalate?: number; block?: number };
 }
 
 const contexts: Map<string, AgentContext> = new Map();
+
+/** Resolve θ for validation from persisted run context (prefer `reviewThreshold`, then legacy triple). */
+export function resolveReviewThresholdFromStoredContext(ctx: AgentContext | undefined): number {
+  if (!ctx) return DEFAULT_REVIEW_THRESHOLD;
+  if (ctx.reviewThreshold != null && !Number.isNaN(ctx.reviewThreshold)) return ctx.reviewThreshold;
+  const legacy = ctx.trustThresholds?.autoApprove;
+  if (legacy != null && !Number.isNaN(legacy)) return legacy;
+  return DEFAULT_REVIEW_THRESHOLD;
+}
 
 function getPath(): string {
   return join(process.cwd(), STORE_DIR, CONTEXT_FILE);
@@ -36,9 +51,21 @@ function save(): void {
   writeFileSync(getPath(), JSON.stringify(obj, null, 2));
 }
 
-export function setAgentContext(agentId: string, intent: string, constraints: string[], jobId?: string): void {
+export function setAgentContext(
+  agentId: string,
+  intent: string,
+  constraints: string[],
+  jobId?: string,
+  reviewThreshold?: number,
+): void {
   load();
-  contexts.set(agentId, { intent, constraints, jobId });
+  const entry: AgentContext = {
+    intent,
+    constraints,
+    jobId,
+    ...(reviewThreshold != null ? { reviewThreshold } : {}),
+  };
+  contexts.set(agentId, entry);
   save();
 }
 

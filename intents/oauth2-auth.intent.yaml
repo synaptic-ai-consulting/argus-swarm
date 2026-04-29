@@ -5,7 +5,4 @@ constraints:
   - Follow project coding standards
   - Do not modify database schema
   - All CI checks must pass
-trustThresholds:
-  autoApprove: 0.85
-  escalate: 0.60
-  block: 0.40
+reviewThreshold: 0.85

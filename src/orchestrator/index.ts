@@ -1,6 +1,7 @@
 import { launchAgent } from "../api/client.js";
 import type { Config } from "../config.js";
 import type { WorkPackage } from "../decomposer/types.js";
+import { resolveReviewThreshold } from "../intent/schema.js";
 import { setAgentContext } from "./run-context.js";
 
 export interface LaunchResult {
@@ -42,7 +43,7 @@ export async function launchSwarm(
       }),
     });
 
-    setAgentContext(agent.id, pkg.intent.intent, pkg.intent.constraints, jobId);
+    setAgentContext(agent.id, pkg.intent.intent, pkg.intent.constraints, jobId, resolveReviewThreshold(pkg.intent));
 
     results.push({
       agentId: agent.id,

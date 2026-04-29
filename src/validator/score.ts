@@ -1,12 +1,21 @@
 import type { Agent } from "../api/types.js";
-import type { TrustThresholds } from "../intent/schema.js";
-import type { ValidationResult } from "./types.js";
+import { DEFAULT_REVIEW_THRESHOLD } from "../intent/schema.js";
+import type { CheckResult, ValidationMode, ValidationResult } from "./types.js";
 
-const DEFAULT_THRESHOLDS: TrustThresholds = {
-  autoApprove: 0.85,
-  escalate: 0.6,
-  block: 0.4,
-};
+/** Roadmap: cap when GitHub CI signals are unavailable (metadata + optional LLM only). */
+export const METADATA_ONLY_CONFIDENCE_CAP = 0.7;
+
+export interface ComputeScoreOptions {
+  /** Paper θ — confidence ≥ reviewThreshold ⇒ auto_approve. Default 0.85 */
+  reviewThreshold?: number;
+  llmScore?: number | null;
+  /** GitHub / CI checks from `runGithubValidationChecks` (or empty). */
+  extraChecks?: CheckResult[];
+  /** When true, cap final confidence with {@link METADATA_ONLY_CONFIDENCE_CAP}. */
+  useConfidenceCap?: boolean;
+  validationMode?: ValidationMode;
+  fallbackReason?: string;
+}
 
 /**
  * Pure scoring logic: compute confidence and decision from agent data.
@@ -14,13 +23,18 @@ const DEFAULT_THRESHOLDS: TrustThresholds = {
  */
 export function computeValidationResult(
   agent: Pick<Agent, "id" | "status" | "summary" | "target">,
-  options: {
-    thresholds?: TrustThresholds;
-    llmScore?: number | null;
-  } = {}
+  options: ComputeScoreOptions = {},
 ): ValidationResult {
-  const { thresholds = DEFAULT_THRESHOLDS, llmScore = null } = options;
-  const checks: ValidationResult["checks"] = [];
+  const {
+    reviewThreshold = DEFAULT_REVIEW_THRESHOLD,
+    llmScore = null,
+    extraChecks = [],
+    useConfidenceCap = false,
+    validationMode,
+    fallbackReason,
+  } = options;
+
+  const checks: CheckResult[] = [];
 
   const hasSummary = !!agent.summary?.trim();
   checks.push({ name: "summary", passed: hasSummary, output: agent.summary });
@@ -35,24 +49,36 @@ export function computeValidationResult(
     output: agent.target?.prUrl,
   });
 
-  const deterministicScore =
-    checks.filter((c) => c.passed).length / Math.max(checks.length, 1);
+  checks.push(...extraChecks);
 
   if (llmScore !== null) {
     checks.push({
       name: "llm_assessment",
-      passed: llmScore >= thresholds.escalate,
+      passed: llmScore >= reviewThreshold,
       output: String(llmScore),
     });
   }
 
-  const confidence =
-    llmScore !== null ? 0.6 * deterministicScore + 0.4 * llmScore : deterministicScore;
+  const deterministicScore =
+    checks.filter((c) => c.passed).length / Math.max(checks.length, 1);
 
-  let decision: ValidationResult["decision"];
-  if (confidence >= thresholds.autoApprove) decision = "auto_approve";
-  else if (confidence >= thresholds.escalate) decision = "escalate";
-  else decision = "block";
+  const confidenceBase =
+    llmScore !== null
+      ? 0.6 * deterministicScore + 0.4 * llmScore
+      : deterministicScore;
+
+  let confidence = confidenceBase;
+  if (useConfidenceCap) {
+    confidence = Math.min(confidence, METADATA_ONLY_CONFIDENCE_CAP);
+  }
+
+  let decision: ValidationResult["decision"] =
+    confidence >= reviewThreshold ? "auto_approve" : "human_review";
+
+  const securityCheck = checks.find((c) => c.name === "security_passed");
+  if (securityCheck && !securityCheck.passed && decision === "auto_approve") {
+    decision = "human_review";
+  }
 
   return {
     agentId: agent.id,
@@ -61,5 +87,8 @@ export function computeValidationResult(
     confidence,
     checks,
     decision,
+    validationMode,
+    fallbackReason,
+    reviewGate: { reviewThreshold },
   };
 }

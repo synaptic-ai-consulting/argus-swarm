@@ -1,30 +1,28 @@
 import { getAgent } from "../api/client.js";
-import type { TrustThresholds } from "../intent/schema.js";
+import { DEFAULT_REVIEW_THRESHOLD } from "../intent/schema.js";
 import type { ValidationResult } from "./types.js";
 import { computeValidationResult } from "./score.js";
 import { llmAssess } from "./llm-assess.js";
-
-const DEFAULT_THRESHOLDS: TrustThresholds = {
-  autoApprove: 0.85,
-  escalate: 0.6,
-  block: 0.4,
-};
+import { runGithubValidationChecks, collectPrUrl } from "./checks/index.js";
 
 export interface ValidateOptions {
   apiKey: string;
   agentId: string;
-  thresholds?: TrustThresholds;
+  /** Defaults to `process.env.GITHUB_TOKEN`. */
+  githubToken?: string;
+  /** Paper θ; defaults to 0.85. */
+  reviewThreshold?: number;
   intent?: string;
   constraints?: string[];
 }
 
-export { computeValidationResult };
+export { computeValidationResult, METADATA_ONLY_CONFIDENCE_CAP, type ComputeScoreOptions } from "./score.js";
 
 /**
- * Validation pipeline: fetch agent, optional LLM assessment, then score.
+ * Validation pipeline: fetch agent, optional GitHub Checks, optional LLM assessment, then score.
  */
 export async function validate(options: ValidateOptions): Promise<ValidationResult> {
-  const { apiKey, agentId, thresholds = DEFAULT_THRESHOLDS } = options;
+  const { apiKey, agentId, reviewThreshold = DEFAULT_REVIEW_THRESHOLD } = options;
 
   const agent = await getAgent(agentId, apiKey);
 
@@ -33,9 +31,19 @@ export async function validate(options: ValidateOptions): Promise<ValidationResu
     llmScore = await llmAssess(
       agent.summary ?? "",
       options.intent,
-      options.constraints
+      options.constraints,
     );
   }
 
-  return computeValidationResult(agent, { thresholds, llmScore });
+  const token = options.githubToken ?? process.env.GITHUB_TOKEN;
+  const gh = await runGithubValidationChecks(collectPrUrl(agent), token);
+
+  return computeValidationResult(agent, {
+    reviewThreshold,
+    llmScore,
+    extraChecks: gh.checks,
+    useConfidenceCap: gh.useConfidenceCap,
+    validationMode: gh.mode,
+    fallbackReason: gh.fallbackReason,
+  });
 }
