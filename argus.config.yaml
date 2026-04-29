@@ -3,7 +3,7 @@
 #
 # Environment variables (read by the CLI / server, not as YAML keys here):
 #   CURSOR_API_KEY   — Cursor Cloud Agents API key (overrides apiKeyPath below)
-#   GITHUB_TOKEN     — GitHub PAT with repo scope; required for `argus cleanup`
+#   GITHUB_TOKEN     — GitHub PAT with repo scope: PR Check runs in validation, and `argus cleanup`
 #   OPENAI_API_KEY   — optional; enables LLM-assisted validation scoring
 
 # --- Target repository ---
