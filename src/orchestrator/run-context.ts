@@ -87,3 +87,13 @@ export function getAgentIdsByJob(jobId: string): string[] {
   });
   return ids;
 }
+
+export function removeAgentContexts(agentIds: string[]): void {
+  if (agentIds.length === 0) return;
+  load();
+  let changed = false;
+  for (const id of agentIds) {
+    if (contexts.delete(id)) changed = true;
+  }
+  if (changed) save();
+}

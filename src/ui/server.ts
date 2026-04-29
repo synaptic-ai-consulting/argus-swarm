@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, extname, join, normalize } from "node:path";
 import { loadConfig, getApiKey, saveConfig } from "../config.js";
 import { listAgents, addFollowUp } from "../api/client.js";
+import { deleteCursorAgentsRemote } from "../jobs/delete-remote-agents.js";
 import {
   listExceptions,
   resolveException,
@@ -17,6 +18,7 @@ import { getTrust, getAllTrust } from "../trust/store.js";
 import { getAgentContext, getAgentIdsByJob } from "../orchestrator/run-context.js";
 import { getAgentFinishedAt } from "../agent-events/store.js";
 import { listJobs, getJob, createJob, updateJob } from "../jobs/store.js";
+import { purgeJobFromArgusStore } from "../jobs/purge-job.js";
 import { loadIntent } from "../intent/loader.js";
 import { IntentSchema } from "../intent/schema.js";
 import { decompose } from "../decomposer/index.js";
@@ -191,6 +193,89 @@ export function createUiServer(port: number) {
         }
 
         res.end(JSON.stringify(job));
+      } catch (e) {
+        res.statusCode = 500;
+        res.end(JSON.stringify({ error: String(e) }));
+      }
+      return;
+    }
+
+    if (jobDetailMatch && req.method === "DELETE") {
+      try {
+        const jobId = jobDetailMatch[1];
+        const job = getJob(jobId);
+        if (!job) {
+          res.statusCode = 404;
+          res.end(JSON.stringify({ error: "Job not found" }));
+          return;
+        }
+
+        const agentIdsForJob = [...new Set([...job.agentIds, ...getAgentIdsByJob(jobId)])];
+
+        if (job.status === "running" || job.status === "creating") {
+          try {
+            const config = loadConfig();
+            const apiKey = getApiKey(config);
+            const idSet = new Set(agentIdsForJob);
+            if (idSet.size > 0) {
+              const { agents } = await listAgents(apiKey, { limit: 100 });
+              for (const a of agents) {
+                if (!idSet.has(a.id)) continue;
+                if (a.status === "RUNNING" || a.status === "CREATING") {
+                  res.statusCode = 409;
+                  res.end(
+                    JSON.stringify({
+                      error: "Cannot delete a job while agents are still running or creating.",
+                    }),
+                  );
+                  return;
+                }
+              }
+            }
+          } catch {
+            res.statusCode = 503;
+            res.end(JSON.stringify({ error: "Could not verify agent status; try again." }));
+            return;
+          }
+        }
+
+        const config = loadConfig();
+        let apiKey: string;
+        try {
+          apiKey = getApiKey(config);
+        } catch (keyErr) {
+          if (agentIdsForJob.length > 0) {
+            res.statusCode = 400;
+            res.end(
+              JSON.stringify({
+                error:
+                  "Cursor API key is required to delete remote agents. Set CURSOR_API_KEY or apiKeyPath, then try again.",
+                detail: String(keyErr),
+              }),
+            );
+            return;
+          }
+          const result = await purgeJobFromArgusStore(jobId);
+          res.end(JSON.stringify({ ok: true, removedAgentIds: result?.removedAgentIds ?? [] }));
+          return;
+        }
+
+        if (agentIdsForJob.length > 0) {
+          const { failures } = await deleteCursorAgentsRemote(agentIdsForJob, apiKey);
+          if (failures.length > 0) {
+            res.statusCode = 502;
+            res.end(
+              JSON.stringify({
+                error: "One or more agents could not be deleted in Cursor; Argus data was not removed.",
+                cursorDeleteFailures: failures,
+              }),
+            );
+            return;
+          }
+        }
+
+        const result = await purgeJobFromArgusStore(jobId);
+        res.end(JSON.stringify({ ok: true, removedAgentIds: result?.removedAgentIds ?? [] }));
       } catch (e) {
         res.statusCode = 500;
         res.end(JSON.stringify({ error: String(e) }));

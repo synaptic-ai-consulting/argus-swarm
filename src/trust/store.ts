@@ -100,6 +100,15 @@ export async function getAllTrust(): Promise<TrustEntry[]> {
   return results;
 }
 
+export async function deleteTrustForAgents(agentIds: string[]): Promise<void> {
+  if (agentIds.length === 0) return;
+  const d = await getDb();
+  for (const id of agentIds) {
+    d.run("DELETE FROM agent_trust WHERE agent_id = ?", [id]);
+  }
+  saveDb();
+}
+
 /** Reset in-memory db cache. Used by tests when switching store dirs. */
 export function resetTrustStoreForTesting(): void {
   db = null;

@@ -39,6 +39,12 @@ export function recordRun(metrics: RunMetrics): void {
   writeFileSync(getPath(), JSON.stringify(all, null, 2));
 }
 
+/** Remove persisted run rows whose `runId` matches (same id as job id in the UI). */
+export function removeRunsWithRunId(runId: string): void {
+  const all = load().filter((r) => r.runId !== runId);
+  writeFileSync(getPath(), JSON.stringify(all, null, 2));
+}
+
 export function getMetrics(): {
   totalRuns: number;
   totalAgents: number;

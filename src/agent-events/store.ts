@@ -45,3 +45,13 @@ export function getAgentFinishedAt(agentId: string): string | undefined {
   load();
   return events.get(agentId)?.finishedAt;
 }
+
+export function removeAgentEvents(agentIds: string[]): void {
+  if (agentIds.length === 0) return;
+  load();
+  let changed = false;
+  for (const id of agentIds) {
+    if (events.delete(id)) changed = true;
+  }
+  if (changed) save();
+}

@@ -96,6 +96,32 @@ export async function deleteAgent(id: string, apiKey: string): Promise<{ id: str
   });
 }
 
+/**
+ * DELETE agent in Cursor; treats 404/204 as success (already removed or empty body).
+ */
+export async function deleteAgentAllowMissing(id: string, apiKey: string): Promise<void> {
+  const url = `${API_BASE}/v0/agents/${encodeURIComponent(id)}`;
+  const res = await fetch(url, {
+    method: "DELETE",
+    headers: {
+      Authorization: getAuthHeader(apiKey),
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (res.status === 404 || res.status === 204) return;
+
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(`Cursor API error ${res.status}: ${err}`);
+  }
+
+  const ct = res.headers.get("content-type") ?? "";
+  if (ct.includes("application/json")) {
+    await res.json().catch(() => undefined);
+  }
+}
+
 export async function addFollowUp(
   id: string,
   apiKey: string,

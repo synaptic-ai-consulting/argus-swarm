@@ -85,3 +85,13 @@ export function updateJob(jobId: string, updates: Partial<Pick<JobRecord, "statu
   saveAll(jobs);
   return true;
 }
+
+/** Removes the job record from disk. Returns the removed row, if any. */
+export function deleteJob(jobId: string): JobRecord | undefined {
+  const jobs = loadAll();
+  const idx = jobs.findIndex((j) => j.jobId === jobId);
+  if (idx < 0) return undefined;
+  const [removed] = jobs.splice(idx, 1);
+  saveAll(jobs);
+  return removed;
+}
